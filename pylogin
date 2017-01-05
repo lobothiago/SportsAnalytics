@@ -1,0 +1,2 @@
+echo ">> Attempting Login to Raspberry Pi"
+ssh pi@192.168.25.75

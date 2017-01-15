@@ -15,8 +15,9 @@ import ConfigParser
 
 config_path = "./config.ini"
 config_section = "crawler"
+logging_section = "logging"
 
-config = ConfigParser.ConfigParser()
+config = ConfigParser.SafeConfigParser()
 config.read(config_path)
 
 def config_section_map(section):
@@ -29,14 +30,18 @@ def config_section_map(section):
             result[option] = None
     return result
 
-inidict = config_section_map('logging')
-pprint(inidict)
-
 # ------ Init Config ------
 
-# ------ Init Logging ------
+# ------ Logging Config ------
 
-log_path = "./logs/"
+log_path = config_section_map(logging_section)['log_path']
+
+complete_path = config_section_map(logging_section)['complete_path']
+debug_path = config_section_map(logging_section)['debug_path']
+general_path = config_section_map(logging_section)['general_path']
+
+general_format = config_section_map(logging_section)['general_format']
+specific_format = config_section_map(logging_section)['specific_format']
 
 if not exists(log_path):
     makedirs(log_path)
@@ -52,34 +57,34 @@ class SingleLevelFilter(logging.Filter):
         else:
             return (record.levelno == self.pass_level)
 
-logger = logging.getLogger("crawler.py")
+logger = logging.getLogger('crawler.py')
 logger.setLevel(logging.DEBUG)
 
-general_formatter = logging.Formatter("[%(levelname)s] [%(name)s] [%(asctime)s]: %(message)s")
-specific_formatter = logging.Formatter("[%(name)s] [%(asctime)s]: %(message)s")
+general_formatter = logging.Formatter(general_format)
+specific_formatter = logging.Formatter(specific_format)
 
-complete_handler = logging.FileHandler(log_path + "complete.log")
+complete_handler = logging.FileHandler(complete_path)
 complete_handler.setLevel(logging.DEBUG)
 complete_handler.setFormatter(general_formatter)
 logger.addHandler(complete_handler)
 
-debug_handler = logging.FileHandler(log_path + "debug.log")
+debug_handler = logging.FileHandler(debug_path)
 debug_handler.addFilter(SingleLevelFilter(logging.DEBUG, False))
 debug_handler.setFormatter(specific_formatter)
 logger.addHandler(debug_handler)
 
-general_handler = logging.FileHandler(log_path + "general.log")
+general_handler = logging.FileHandler(general_path)
 general_handler.setLevel(logging.INFO)
 general_handler.setFormatter(general_formatter)
 logger.addHandler(general_handler)
 
-# ------ Init Logging ------
+# ------ Logging Config ------
 
-bet_url = "http://www.esportenet.net/futebolapi/api/CampJogos?"
-bet_params = "$filter=status eq 0 and ativo eq 1 and cancelado ne 1 and camp_ativo eq 1 and esporte_ativo eq 1 and placar_c eq null and placar_f eq null and qtd_odds gt 0 and qtd_main_odds gt 0 and (taxa_c gt 0 or taxa_f gt 0) and esporte_id eq 1 and dt_hr_ini le datetime'{0}-{1}-{2}T23:59:59'&$orderby=camp_nome,dt_hr_ini,camp_jog_id".format(datetime.now().year, datetime.now().month, datetime.now().day)
+bets_api_url = config_section_map(config_section)['bets_api_url']
+bets_params = config_section_map(config_section)['bets_params']
 
-data_url = "http://br.soccerway.com"
-team_params = "/teams/club-teams/"
+data_url = config_section_map(config_section)['data_url']
+team_list_url = config_section_map(config_section)['team_list_url']
 
 database = {}
 
@@ -111,7 +116,7 @@ def parse_json(url):
 def crawl_bets():
     logger.info("Starting bet crawling procedure")
 
-    data = parse_json(bet_url + urllib.quote_plus(bet_params))
+    data = parse_json(bets_api_url + urllib.quote(bets_params.format(datetime.now().year, datetime.now().month, datetime.now().day)))    
 
     for bet in data:
         print bet['camp_nome']
@@ -123,7 +128,7 @@ def crawl_bets():
 def build_team_database():
     logger.info("Starting team database update procedure")
     
-    parsed_html = parse_html(data_url + team_params)
+    parsed_html = parse_html(team_list_url)
     country_ids = [x.get('data-area_id') for x in parsed_html.body.find('ul', attrs={'class':'areas'}).find_all('li', attrs={'class':'expandable'})]
     
     logger.info("{} country ids retrieved".format(len(country_ids)))
@@ -172,11 +177,10 @@ def build_team_database():
                 else:
                     database[url].append(team_names[index])
 
-        # pprint(database)
+        pprint(database)
 
-        
-
-build_team_database()
+# build_team_database()
+# crawl_bets()
 
 # Team Page:
 # -> Title: div id='subheading'

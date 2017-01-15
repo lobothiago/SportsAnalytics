@@ -2,20 +2,101 @@
 
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, Job
 from os.path import exists
+from os import makedirs
 from datetime import datetime, timedelta
+import crawler
+import ConfigParser
+import logging
 
-subscription_password = "batata"
-subscribers_file = "subscribers"
-token_file = "token"
-bot_token = ""
-digest_hour = 8
+# ------ Init Config ------
 
-with open(token_file, "r") as f:
-	bot_token = [x.rstrip('\n') for x in f.readlines()][0]
+config_path = "./config.ini"
+config_section = "telegram"
+logging_section = "logging"
 
-print bot_token
+config = ConfigParser.SafeConfigParser()
+config.read(config_path)
 
-def callback_minute(bot, job):
+def config_section_map(section):
+    result = {}
+    options = config.options(section)
+    for option in options:
+        try:
+            result[option] = config.get(section, option)
+        except:
+            result[option] = None
+    return result
+
+# ------ Init Config ------
+
+# ------ Logging Config ------
+
+log_path = config_section_map(logging_section)['log_path']
+
+complete_path = config_section_map(logging_section)['complete_path']
+debug_path = config_section_map(logging_section)['debug_path']
+general_path = config_section_map(logging_section)['general_path']
+
+general_format = config_section_map(logging_section)['general_format']
+specific_format = config_section_map(logging_section)['specific_format']
+
+if not exists(log_path):
+    makedirs(log_path)
+
+class SingleLevelFilter(logging.Filter):
+    def __init__(self, pass_level, reject):
+        self.pass_level = pass_level
+        self.reject = reject
+
+    def filter(self, record):
+        if self.reject:
+            return (record.levelno != self.pass_level)
+        else:
+            return (record.levelno == self.pass_level)
+
+logger = logging.getLogger('esportenet_bot.py')
+logger.setLevel(logging.DEBUG)
+
+general_formatter = logging.Formatter(general_format)
+specific_formatter = logging.Formatter(specific_format)
+
+complete_handler = logging.FileHandler(complete_path)
+complete_handler.setLevel(logging.DEBUG)
+complete_handler.setFormatter(general_formatter)
+logger.addHandler(complete_handler)
+
+debug_handler = logging.FileHandler(debug_path)
+debug_handler.addFilter(SingleLevelFilter(logging.DEBUG, False))
+debug_handler.setFormatter(specific_formatter)
+logger.addHandler(debug_handler)
+
+general_handler = logging.FileHandler(general_path)
+general_handler.setLevel(logging.INFO)
+general_handler.setFormatter(general_formatter)
+logger.addHandler(general_handler)
+
+# ------ Logging Config ------
+
+subscription_password = config_section_map(config_section)['subscription_password']
+subscribers_file = config_section_map(config_section)['subscribers_file']
+token_file = config_section_map(config_section)['token_file']
+digest_schedule_hour = config_section_map(config_section)['digest_schedule_hour']
+
+def read_token():
+	logger.info("Attempting to read bot token")
+	
+	try:
+		with open(token_file, "r") as f:
+			bot_token = [x.rstrip('\n') for x in f.readlines()][0]
+			return bot_token
+	except Exception as e:
+		logger.critical("Couldn't read bot token: {}".format(e.message))
+
+	return None
+
+def callback_digest(bot, job):
+	logger.info("Sending digest message")
+
 	if exists(subscribers_file):
 		with open(subscribers_file, "r") as f:
 			lines = [x.rstrip('\n') for x in f.readlines()]
@@ -69,7 +150,7 @@ def test(bot, update):
 		lines = [x.rstrip('\n') for x in f.readlines()]
 		for chat_id in lines:
 			bot.send_message(chat_id=chat_id,
-							 text=u"ação à décima potência\n")
+							 text=u"Mensagem de teste.\n")
 
 def unknown(bot, update):
 	msg = u"Desculpe, esse comando não parece existir."
@@ -77,10 +158,11 @@ def unknown(bot, update):
 	                 text=msg)
 	start(bot, update)
 
-####################### STARTUP #######################
+# ------ Bot Startup ------
+
 # Connecting to Telegram API
 # Updater retrieves information and dispatcher connects commands
-updater = Updater(token=bot_token)
+updater = Updater(token=read_token())
 dispatcher = updater.dispatcher
 job_q = updater.job_queue
 
@@ -88,12 +170,12 @@ job_q = updater.job_queue
 today = datetime(year=datetime.today().year,
 				 month=datetime.today().month,
 				 day=datetime.today().day)
-target = today + timedelta(days=1, hours=digest_hour)
+target = today + timedelta(days=1, hours=digest_schedule_hour)
 deltaseconds = (target - datetime.now()).total_seconds()
 
 # Add new Job to the dispatcher's job queue.
 # Will happen every deltaseconds seconds, starting from now
-job_q.put(Job(callback_minute, (24 * 60 * 60)), next_t=deltaseconds)
+job_q.put(Job(callback_digest, (24 * 60 * 60)), next_t=deltaseconds)
 
 start_handler = CommandHandler('start', start)
 dispatcher.add_handler(start_handler)

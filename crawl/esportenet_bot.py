@@ -1,11 +1,7 @@
 # -*- coding: utf-8 -*-
 
-import telegram
-import redis
-import time
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, Job
-from os import listdir, makedirs, remove
-from os.path import isfile, join, exists
+from os.path import exists
 from datetime import datetime, timedelta
 
 subscription_password = "batata"

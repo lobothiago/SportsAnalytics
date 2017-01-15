@@ -3,42 +3,6 @@
 import logging
 from os.path import exists
 from os import makedirs
-import ConfigParser
-
-# ------ Init Config ------
-
-config_path = "./config.ini"
-config_section = "crawler"
-logging_section = "logging"
-
-config = ConfigParser.SafeConfigParser()
-config.read(config_path)
-
-def config_section_map(section):
-    result = {}
-    options = config.options(section)
-    for option in options:
-        try:
-            result[option] = config.get(section, option)
-        except:
-            result[option] = None
-    return result
-
-# ------ Init Config ------
-
-# ------ Logging Config ------
-
-log_path = config_section_map(logging_section)['log_path']
-
-complete_path = config_section_map(logging_section)['complete_path']
-debug_path = config_section_map(logging_section)['debug_path']
-general_path = config_section_map(logging_section)['general_path']
-
-general_format = config_section_map(logging_section)['general_format']
-specific_format = config_section_map(logging_section)['specific_format']
-
-if not exists(log_path):
-    makedirs(log_path)
 
 class SingleLevelFilter(logging.Filter):
     def __init__(self, pass_level, reject):
@@ -51,30 +15,56 @@ class SingleLevelFilter(logging.Filter):
         else:
             return (record.levelno == self.pass_level)
 
-logger = logging.getLogger('crawler.py')
-logger.setLevel(logging.DEBUG)
+class MyLogger():
 
-general_formatter = logging.Formatter(general_format)
-specific_formatter = logging.Formatter(specific_format)
+    def __init__(self, 
+                 name, 
+                 log_path, 
+                 general_format = "[%(levelname)s] [%(name)s] [%(asctime)s]: %(message)s", 
+                 specific_format = "[%(name)s] [%(asctime)s]: %(message)s"):
+        self.name = name
+        self.log_path = log_path
+        self.complete_path = log_path + "/complete.log"
+        self.general_path = log_path + "/general.log"
+        self.debug_path = log_path + "/debug.log"
+        self.general_format = general_format
+        self.specific_format = specific_format
+        
+        if not exists(log_path):
+            makedirs(log_path)
 
-complete_handler = logging.FileHandler(complete_path)
-complete_handler.setLevel(logging.DEBUG)
-complete_handler.setFormatter(general_formatter)
-logger.addHandler(complete_handler)
+        self.logger = logging.getLogger(name)
+        self.logger.setLevel(logging.DEBUG)
 
-debug_handler = logging.FileHandler(debug_path)
-debug_handler.addFilter(SingleLevelFilter(logging.DEBUG, False))
-debug_handler.setFormatter(specific_formatter)
-logger.addHandler(debug_handler)
+        general_formatter = logging.Formatter(general_format)
+        specific_formatter = logging.Formatter(specific_format)
 
-general_handler = logging.FileHandler(general_path)
-general_handler.setLevel(logging.INFO)
-general_handler.setFormatter(general_formatter)
-logger.addHandler(general_handler)
+        complete_handler = logging.FileHandler(self.complete_path)
+        complete_handler.setLevel(logging.DEBUG)
+        complete_handler.setFormatter(general_formatter)
+        self.logger.addHandler(complete_handler)
 
-# ------ Logging Config ------
+        debug_handler = logging.FileHandler(self.debug_path)
+        debug_handler.addFilter(SingleLevelFilter(logging.DEBUG, False))
+        debug_handler.setFormatter(specific_formatter)
+        self.logger.addHandler(debug_handler)
 
-# class MyLogger():
+        general_handler = logging.FileHandler(self.general_path)
+        general_handler.setLevel(logging.INFO)
+        general_handler.setFormatter(general_formatter)
+        self.logger.addHandler(general_handler)
 
-#     def __init__(self):
-#         
+    def debug(self, message):
+        self.logger.debug(message)
+
+    def info(self, message):
+        self.logger.info(message)
+
+    def warning(self, message):
+        self.logger.warning(message)
+
+    def error(self, message):
+        self.logger.error(message)
+
+    def critical(self, message):
+        self.logger.critical(message)

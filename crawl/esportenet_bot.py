@@ -2,91 +2,38 @@
 
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, Job
 from os.path import exists
-from os import makedirs
 from datetime import datetime, timedelta
-import crawler
-import ConfigParser
-import logging
+from my_logger import MyLogger
+from my_config_reader import MyConfigReader
+from my_db import SQLDb
 
-# ------ Init Config ------
-
-config_path = "./config.ini"
-config_section = "telegram"
+telegram_section = "telegram"
 logging_section = "logging"
+db_section = "db"
 
-config = ConfigParser.SafeConfigParser()
-config.read(config_path)
+config = MyConfigReader()
+logger = MyLogger("esportenet_bot.py", config.get(logging_section, "log_path"))
 
-def config_section_map(section):
-    result = {}
-    options = config.options(section)
-    for option in options:
-        try:
-            result[option] = config.get(section, option)
-        except:
-            result[option] = None
-    return result
+subscribers_file = config.get(telegram_section, "subscribers_file")
 
-# ------ Init Config ------
+# cursor.execute("""
+# 	INSERT INTO subscribers (id, username)
+#     VALUES (1, "William");
+# """)
 
-# ------ Logging Config ------
+# cursor.execute(""" 
+# 	INSERT INTO subscribers (id, username)
+#     VALUES (2, "Shakespeare");
+# """)
 
-log_path = config_section_map(logging_section)['log_path']
-
-complete_path = config_section_map(logging_section)['complete_path']
-debug_path = config_section_map(logging_section)['debug_path']
-general_path = config_section_map(logging_section)['general_path']
-
-general_format = config_section_map(logging_section)['general_format']
-specific_format = config_section_map(logging_section)['specific_format']
-
-if not exists(log_path):
-    makedirs(log_path)
-
-class SingleLevelFilter(logging.Filter):
-    def __init__(self, pass_level, reject):
-        self.pass_level = pass_level
-        self.reject = reject
-
-    def filter(self, record):
-        if self.reject:
-            return (record.levelno != self.pass_level)
-        else:
-            return (record.levelno == self.pass_level)
-
-logger = logging.getLogger('esportenet_bot.py')
-logger.setLevel(logging.DEBUG)
-
-general_formatter = logging.Formatter(general_format)
-specific_formatter = logging.Formatter(specific_format)
-
-complete_handler = logging.FileHandler(complete_path)
-complete_handler.setLevel(logging.DEBUG)
-complete_handler.setFormatter(general_formatter)
-logger.addHandler(complete_handler)
-
-debug_handler = logging.FileHandler(debug_path)
-debug_handler.addFilter(SingleLevelFilter(logging.DEBUG, False))
-debug_handler.setFormatter(specific_formatter)
-logger.addHandler(debug_handler)
-
-general_handler = logging.FileHandler(general_path)
-general_handler.setLevel(logging.INFO)
-general_handler.setFormatter(general_formatter)
-logger.addHandler(general_handler)
-
-# ------ Logging Config ------
-
-subscription_password = config_section_map(config_section)['subscription_password']
-subscribers_file = config_section_map(config_section)['subscribers_file']
-token_file = config_section_map(config_section)['token_file']
-digest_schedule_hour = config_section_map(config_section)['digest_schedule_hour']
+# cursor.execute("SELECT * FROM subscribers WHERE id=1 LIMIT 1;")
+# print cursor.fetchone()
 
 def read_token():
 	logger.info("Attempting to read bot token")
 	
 	try:
-		with open(token_file, "r") as f:
+		with open(config.get(telegram_section, "token_file"), "r") as f:
 			bot_token = [x.rstrip('\n') for x in f.readlines()][0]
 			return bot_token
 	except Exception as e:
@@ -137,13 +84,15 @@ def start(bot, update):
 	                 text=msg)
 
 def subscribe(bot, update, args):
-	if len(args) > 0 and args[0] == subscription_password:
+	if len(args) > 0 and args[0] == config.get(telegram_section, "subscription_password"):
 		result = add_subscription(update.message.chat_id)
 		bot.send_message(chat_id=update.message.chat_id,
 	                 	 text=result)
+		logger.info("Subscription attempt by: {} (id: {}) - succeeded".format(update.message.from_user.username, str(update.message.from_user.id)))
 	else:
 		bot.send_message(chat_id=update.message.chat_id,
 	                 	 text=u"Senha incorreta.\n")
+		logger.info("Subscription attempt by: {} (id: {}) - failed".format(update.message.from_user.username, str(update.message.from_user.id)))
 
 def test(bot, update):
 	with open(subscribers_file, "r") as f:
@@ -158,36 +107,63 @@ def unknown(bot, update):
 	                 text=msg)
 	start(bot, update)
 
-# ------ Bot Startup ------
+def bot_init():
+	logger.info("Initializing Telegram Bot")
+	# Connecting to Telegram API
+	# Updater retrieves information and dispatcher connects commands
+	updater = Updater(token=read_token())
+	dispatcher = updater.dispatcher
+	job_q = updater.job_queue
 
-# Connecting to Telegram API
-# Updater retrieves information and dispatcher connects commands
-updater = Updater(token=read_token())
-dispatcher = updater.dispatcher
-job_q = updater.job_queue
+	# Determine remaining seconds until next digest message (1 per day)
+	today = datetime(year=datetime.today().year,
+					 month=datetime.today().month,
+					 day=datetime.today().day)
+	target = today + timedelta(days=1, hours=int(config.get(telegram_section, "digest_schedule_hour")))
+	deltaseconds = (target - datetime.now()).total_seconds()
+	logger.info("Next digest: {} - deltaseconds: {}".format(target, deltaseconds))
 
-# Determine remaining seconds until next digest message (1 per day)
-today = datetime(year=datetime.today().year,
-				 month=datetime.today().month,
-				 day=datetime.today().day)
-target = today + timedelta(days=1, hours=digest_schedule_hour)
-deltaseconds = (target - datetime.now()).total_seconds()
+	# Add new Job to the dispatcher's job queue.
+	# Will happen every deltaseconds seconds, starting from now
+	job_q.put(Job(callback_digest, (24 * 60 * 60)), next_t=deltaseconds)
 
-# Add new Job to the dispatcher's job queue.
-# Will happen every deltaseconds seconds, starting from now
-job_q.put(Job(callback_digest, (24 * 60 * 60)), next_t=deltaseconds)
+	start_handler = CommandHandler('start', start)
+	dispatcher.add_handler(start_handler)
 
-start_handler = CommandHandler('start', start)
-dispatcher.add_handler(start_handler)
+	subscribe_handler = CommandHandler('subscribe', subscribe, pass_args=True)
+	dispatcher.add_handler(subscribe_handler)
 
-subscribe_handler = CommandHandler('subscribe', subscribe, pass_args=True)
-dispatcher.add_handler(subscribe_handler)
+	test_handler = CommandHandler('test', test)
+	dispatcher.add_handler(test_handler)
 
-test_handler = CommandHandler('test', test)
-dispatcher.add_handler(test_handler)
+	unknown_handler = MessageHandler([Filters.command], unknown)
+	dispatcher.add_handler(unknown_handler)
 
-unknown_handler = MessageHandler([Filters.command], unknown)
-dispatcher.add_handler(unknown_handler)
+	logger.info("Bot will now start polling")
+	updater.start_polling()
+	updater.idle()
 
-updater.start_polling()
-updater.idle()
+def db_init():
+	logger.info("Initializing database")
+	db = SQLDb(config.get(db_section, "db_name"))
+
+	logger.info("Creating table {}".format(config.get(db_section, "subscribers_table_name")))
+	if not db.table_exists(config.get(db_section, "subscribers_table_name")):
+		db.execute(""" 
+			CREATE TABLE {} 
+			( 
+				id INTEGER PRIMARY KEY,
+				username VARCHAR(40)
+			);
+		""".format(config.get(db_section, "subscribers_table_name")))
+	else:
+		logger.info("Table already exists")
+
+def init():
+	db_init()
+	bot_init()
+
+init()
+
+# Output of update after message
+# {'message': {'migrate_to_chat_id': 0, 'delete_chat_photo': False, 'new_chat_photo': [], 'entities': [{'length': 10, 'type': u'bot_command', 'offset': 0}], 'text': u'/subscribe lala', 'migrate_from_chat_id': 0, 'channel_chat_created': False, 'from': {'username': u'thiago_lobo', 'first_name': u'Thiago', 'last_name': u'Lobo', 'type': '', 'id': 58880229}, 'supergroup_chat_created': False, 'chat': {'username': u'thiago_lobo', 'first_name': u'Thiago', 'all_members_are_admins': False, 'title': '', 'last_name': u'Lobo', 'type': u'private', 'id': 58880229}, 'photo': [], 'date': 1484511254, 'group_chat_created': False, 'caption': '', 'message_id': 323, 'new_chat_title': ''}, 'update_id': 503174214}

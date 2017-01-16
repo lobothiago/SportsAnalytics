@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, Job
-from os.path import exists
 from datetime import datetime, timedelta
 from my_logger import MyLogger
 from my_config_reader import MyConfigReader
@@ -13,21 +12,6 @@ db_section = "db"
 
 config = MyConfigReader()
 logger = MyLogger("esportenet_bot.py", config.get(logging_section, "log_path"))
-
-subscribers_file = config.get(telegram_section, "subscribers_file")
-
-# cursor.execute("""
-# 	INSERT INTO subscribers (id, username)
-#     VALUES (1, "William");
-# """)
-
-# cursor.execute(""" 
-# 	INSERT INTO subscribers (id, username)
-#     VALUES (2, "Shakespeare");
-# """)
-
-# cursor.execute("SELECT * FROM subscribers WHERE id=1 LIMIT 1;")
-# print cursor.fetchone()
 
 def read_token():
 	logger.info("Attempting to read bot token")
@@ -43,33 +27,46 @@ def read_token():
 
 def callback_digest(bot, job):
 	logger.info("Sending digest message")
+	
+	db = SQLDb(config.get(db_section, "db_name"))
+	
+	chat_ids = [row[0] for row in db.execute_group("SELECT id FROM {};".format(config.get(db_section, "subscribers_table_name")))]
+	
+	for chat_id in chat_ids:
+		bot.send_message(chat_id=chat_id,
+						 text=u"Essa mensagem chega a cada dia às 08:00!\n")
 
-	if exists(subscribers_file):
-		with open(subscribers_file, "r") as f:
-			lines = [x.rstrip('\n') for x in f.readlines()]
-			for chat_id in lines:
-				bot.send_message(chat_id=chat_id,
-								 text=u"Essa mensagem chega a cada dia às 08:00!\n")
+def add_subscription(sub_id, sub_name):
+	db = SQLDb(config.get(db_section, "db_name"))
 
-def add_subscription(chat_id):
-	if exists(subscribers_file):
-		with open(subscribers_file, "r") as f:
-			lines = [x.rstrip('\n') for x in f.readlines()]
-			if str(chat_id) in lines:
-				return u"Assinatura já existente.\n"
+	if db.row_exists(config.get(db_section, "subscribers_table_name"), "id={}".format(sub_id)):
+			return u"Assinatura já existente.\n"
 
-	if not exists(subscribers_file):
-		with open(subscribers_file, "w") as f:
-			f.write(str(chat_id))
-			f.write("\n")
-			f.close()
-	else:
-		with open(subscribers_file, "a") as f:
-			f.write(str(chat_id))
-			f.write("\n")
-			f.close()
+	db.execute(""" 
+		INSERT INTO {} (id, username)
+		VALUES ({}, '{}');
+	""".format(config.get(db_section, "subscribers_table_name"), sub_id, sub_name))
 
 	return u"Assinatura adicionada com sucesso.\n"
+
+def subscribe(bot, update, args):
+	sub_id = str(update.message.chat_id)
+	sub_name = None
+	
+	if update.message.chat.type == 'private':
+		sub_name = update.message.from_user.username
+	else:
+		sub_name = update.message.chat.title
+
+	if len(args) > 0 and args[0] == config.get(telegram_section, "subscription_password"):
+		result = add_subscription(sub_id, sub_name)
+		bot.send_message(chat_id=update.message.chat_id,
+	                 	 text=result)
+		logger.info("Subscription attempt by: {} (id: {}) - succeeded".format(sub_name, sub_id))
+	else:
+		bot.send_message(chat_id=update.message.chat_id,
+	                 	 text=u"Senha incorreta.\n")
+		logger.info("Subscription attempt by: {} (id: {}) - failed".format(sub_name, sub_id))
 	
 def start(bot, update):
 	me = bot.get_me()
@@ -83,23 +80,14 @@ def start(bot, update):
 	bot.send_message(chat_id=update.message.chat_id,
 	                 text=msg)
 
-def subscribe(bot, update, args):
-	if len(args) > 0 and args[0] == config.get(telegram_section, "subscription_password"):
-		result = add_subscription(update.message.chat_id)
-		bot.send_message(chat_id=update.message.chat_id,
-	                 	 text=result)
-		logger.info("Subscription attempt by: {} (id: {}) - succeeded".format(update.message.from_user.username, str(update.message.from_user.id)))
-	else:
-		bot.send_message(chat_id=update.message.chat_id,
-	                 	 text=u"Senha incorreta.\n")
-		logger.info("Subscription attempt by: {} (id: {}) - failed".format(update.message.from_user.username, str(update.message.from_user.id)))
-
 def test(bot, update):
-	with open(subscribers_file, "r") as f:
-		lines = [x.rstrip('\n') for x in f.readlines()]
-		for chat_id in lines:
-			bot.send_message(chat_id=chat_id,
-							 text=u"Mensagem de teste.\n")
+	db = SQLDb(config.get(db_section, "db_name"))
+	chat_ids = [row[0] for row in db.execute_group("SELECT id FROM {};".format(config.get(db_section, "subscribers_table_name")))]
+	logger.debug("Found {} chat ids in database".format(len(chat_ids)))
+	for chat_id in chat_ids:
+		logger.debug("Sending test message to id: {}".format(chat_id))
+		bot.send_message(chat_id=chat_id,
+						 text=u"Mensagem de teste.\n")
 
 def unknown(bot, update):
 	msg = u"Desculpe, esse comando não parece existir."
@@ -124,7 +112,7 @@ def bot_init():
 	logger.info("Next digest: {} - deltaseconds: {}".format(target, deltaseconds))
 
 	# Add new Job to the dispatcher's job queue.
-	# Will happen every deltaseconds seconds, starting from now
+	# Will happen every 24 hours seconds, starting from deltaseconds
 	job_q.put(Job(callback_digest, (24 * 60 * 60)), next_t=deltaseconds)
 
 	start_handler = CommandHandler('start', start)
@@ -136,7 +124,7 @@ def bot_init():
 	test_handler = CommandHandler('test', test)
 	dispatcher.add_handler(test_handler)
 
-	unknown_handler = MessageHandler([Filters.command], unknown)
+	unknown_handler = MessageHandler(Filters.command, unknown)
 	dispatcher.add_handler(unknown_handler)
 
 	logger.info("Bot will now start polling")
@@ -145,15 +133,16 @@ def bot_init():
 
 def db_init():
 	logger.info("Initializing database")
-	db = SQLDb(config.get(db_section, "db_name"))
 
-	logger.info("Creating table {}".format(config.get(db_section, "subscribers_table_name")))
+	db = SQLDb(config.get(db_section, "db_name"))
+	
+	logger.info("Creating table '{}'".format(config.get(db_section, "subscribers_table_name")))
 	if not db.table_exists(config.get(db_section, "subscribers_table_name")):
 		db.execute(""" 
 			CREATE TABLE {} 
 			( 
 				id INTEGER PRIMARY KEY,
-				username VARCHAR(40)
+				username VARCHAR(25)
 			);
 		""".format(config.get(db_section, "subscribers_table_name")))
 	else:

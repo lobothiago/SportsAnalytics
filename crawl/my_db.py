@@ -19,8 +19,10 @@ class SQLDb():
 
     def execute(self, command):
         self.cursor.execute(command)
+        self.connection.commit()
         return self.cursor.fetchone()
 
     def execute_group(self, command):
         self.cursor.execute(command)
+        self.connection.commit()
         return self.cursor.fetchall()

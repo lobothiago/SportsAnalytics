@@ -1,0 +1,2 @@
+rm database.db
+rm ./logs/*.log

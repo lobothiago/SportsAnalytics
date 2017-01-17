@@ -10,11 +10,11 @@ class SQLDb():
         self.cursor = self.connection.cursor()
 
     def table_exists(self, name):
-        self.cursor.execute("SELECT EXISTS(SELECT name FROM sqlite_master WHERE type='table' AND name='{}');".format(name))
+        self.cursor.execute(u"SELECT EXISTS(SELECT name FROM sqlite_master WHERE type='table' AND name='{}');".format(name))
         return self.cursor.fetchone()[0]
 
     def row_exists(self, table, condition):
-        self.cursor.execute("SELECT EXISTS(SELECT * FROM {} WHERE {} LIMIT 1);".format(table, condition))
+        self.cursor.execute(u"SELECT EXISTS(SELECT * FROM {} WHERE {} LIMIT 1);".format(table, condition))
         return self.cursor.fetchone()[0]
 
     def execute(self, command):

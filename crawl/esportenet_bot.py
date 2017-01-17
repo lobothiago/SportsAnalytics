@@ -13,11 +13,18 @@ db_section = "db"
 config = MyConfigReader()
 logger = MyLogger("esportenet_bot.py")
 
+token_file = config.get(telegram_section, "token_file")
+subscription_password = config.get(telegram_section, "subscription_password")
+digest_schedule_hour = config.get(telegram_section, "digest_schedule_hour")
+
+db_name = config.get(db_section, "db_name")
+subscribers_table_name = config.get(db_section, "subscribers_table_name")
+
 def read_token():
 	logger.info("Attempting to read bot token")
 	
 	try:
-		with open(config.get(telegram_section, "token_file"), "r") as f:
+		with open(token_file, "r") as f:
 			bot_token = [x.rstrip('\n') for x in f.readlines()][0]
 			return bot_token
 	except Exception as e:
@@ -28,24 +35,24 @@ def read_token():
 def callback_digest(bot, job):
 	logger.info("Sending digest message")
 	
-	db = SQLDb(config.get(db_section, "db_name"))
+	db = SQLDb(db_name)
 	
-	chat_ids = [row[0] for row in db.execute_group("SELECT id FROM {};".format(config.get(db_section, "subscribers_table_name")))]
+	chat_ids = [row[0] for row in db.execute_group("SELECT id FROM {};".format(subscribers_table_name))]
 	
 	for chat_id in chat_ids:
 		bot.send_message(chat_id=chat_id,
 						 text=u"Essa mensagem chega a cada dia às 08:00!\n")
 
 def add_subscription(sub_id, sub_name):
-	db = SQLDb(config.get(db_section, "db_name"))
+	db = SQLDb(db_name)
 
-	if db.row_exists(config.get(db_section, "subscribers_table_name"), "id={}".format(sub_id)):
+	if db.row_exists(subscribers_table_name, "id={}".format(sub_id)):
 			return u"Assinatura já existente.\n"
 
 	db.execute(""" 
 		INSERT INTO {} (id, username)
 		VALUES ({}, '{}');
-	""".format(config.get(db_section, "subscribers_table_name"), sub_id, sub_name))
+	""".format(subscribers_table_name, sub_id, sub_name))
 
 	return u"Assinatura adicionada com sucesso.\n"
 
@@ -58,15 +65,22 @@ def subscribe(bot, update, args):
 	else:
 		sub_name = update.message.chat.title
 
-	if len(args) > 0 and args[0] == config.get(telegram_section, "subscription_password"):
+	logger.info("Subscription attempt by: {} (id: {})".format(sub_name, sub_id))
+
+	if len(args) > 0:
+		logger.debug("Password given: '{}'. Expected '{}'".format(args[0], subscription_password))
+	else:
+		logger.debug("No password given. Expected '{}'".format(subscription_password))
+
+	if len(args) > 0 and args[0] == subscription_password:
 		result = add_subscription(sub_id, sub_name)
 		bot.send_message(chat_id=update.message.chat_id,
 	                 	 text=result)
-		logger.info("Subscription attempt by: {} (id: {}) - succeeded".format(sub_name, sub_id))
+		logger.info("Subscription attempt succeeded")
 	else:
 		bot.send_message(chat_id=update.message.chat_id,
 	                 	 text=u"Senha incorreta.\n")
-		logger.info("Subscription attempt by: {} (id: {}) - failed".format(sub_name, sub_id))
+		logger.info("Subscription attempt failed")
 	
 def start(bot, update):
 	me = bot.get_me()
@@ -81,9 +95,12 @@ def start(bot, update):
 	                 text=msg)
 
 def test(bot, update):
-	db = SQLDb(config.get(db_section, "db_name"))
-	chat_ids = [row[0] for row in db.execute_group("SELECT id FROM {};".format(config.get(db_section, "subscribers_table_name")))]
+	db = SQLDb(db_name)
+
+	chat_ids = [row[0] for row in db.execute_group("SELECT id FROM {};".format(subscribers_table_name))]
+	
 	logger.debug("Found {} chat ids in database".format(len(chat_ids)))
+	
 	for chat_id in chat_ids:
 		logger.debug("Sending test message to id: {}".format(chat_id))
 		bot.send_message(chat_id=chat_id,
@@ -108,11 +125,14 @@ def bot_init():
 					 month=datetime.today().month,
 					 day=datetime.today().day)
 	logger.debug("Current day: {}".format(current_day))
-	target = current_day + timedelta(hours=int(config.get(telegram_section, "digest_schedule_hour")))
+
+	target = current_day + timedelta(hours=int(digest_schedule_hour))
 	logger.debug("Base digest target: {}".format(target))
+	
 	if target < datetime.today():
 		target = target + timedelta(days=1)
 		logger.debug("Target too early. Postpone one day: {}".format(target))
+	
 	deltaseconds = (target - datetime.today()).total_seconds()
 	logger.info("Next digest: {} - deltaseconds: {}".format(target, deltaseconds))
 
@@ -137,27 +157,28 @@ def bot_init():
 	updater.idle()
 
 def db_init():
-	logger.info("Initializing database")
+	logger.info("Initializing database: '{}'".format(db_name))
 
-	db = SQLDb(config.get(db_section, "db_name"))
+	db = SQLDb(db_name)
 	
-	logger.info("Creating table '{}'".format(config.get(db_section, "subscribers_table_name")))
-	if not db.table_exists(config.get(db_section, "subscribers_table_name")):
+	logger.info("Creating table: '{}'".format(subscribers_table_name))
+	if not db.table_exists(subscribers_table_name):
 		db.execute(""" 
 			CREATE TABLE {} 
 			( 
 				id INTEGER PRIMARY KEY,
 				username VARCHAR(25)
 			);
-		""".format(config.get(db_section, "subscribers_table_name")))
+		""".format(subscribers_table_name))
 	else:
-		logger.info("Table already exists")
+		logger.info("Table already existent")
 
 def init():
 	db_init()
 	bot_init()
 
-init()
-
-# Output of update after message
-# {'message': {'migrate_to_chat_id': 0, 'delete_chat_photo': False, 'new_chat_photo': [], 'entities': [{'length': 10, 'type': u'bot_command', 'offset': 0}], 'text': u'/subscribe lala', 'migrate_from_chat_id': 0, 'channel_chat_created': False, 'from': {'username': u'thiago_lobo', 'first_name': u'Thiago', 'last_name': u'Lobo', 'type': '', 'id': 58880229}, 'supergroup_chat_created': False, 'chat': {'username': u'thiago_lobo', 'first_name': u'Thiago', 'all_members_are_admins': False, 'title': '', 'last_name': u'Lobo', 'type': u'private', 'id': 58880229}, 'photo': [], 'date': 1484511254, 'group_chat_created': False, 'caption': '', 'message_id': 323, 'new_chat_title': ''}, 'update_id': 503174214}
+if __name__ == '__main__':
+	try:
+		init()
+	except Exception as e:
+		logger.critical("Couldn't initialize bot: {}".format(e.message))

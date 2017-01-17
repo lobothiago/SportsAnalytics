@@ -98,7 +98,7 @@ def unknown(bot, update):
 def bot_init():
 	logger.info("Initializing Telegram Bot")
 	# Connecting to Telegram API
-	# Updater retrieves information and dispatcher connects commands
+	# Updater retrieves information and dispatcher connects commands 
 	updater = Updater(token=read_token())
 	dispatcher = updater.dispatcher
 	job_q = updater.job_queue

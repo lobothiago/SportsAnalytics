@@ -19,7 +19,7 @@ class MyLogger():
 
     def __init__(self, 
                  name, 
-                 log_path, 
+                 log_path = "./logs", 
                  general_format = "[%(levelname)s] [%(name)s] [%(asctime)s]: %(message)s", 
                  specific_format = "[%(name)s] [%(asctime)s]: %(message)s"):
         self.name = name

@@ -11,7 +11,7 @@ logging_section = "logging"
 db_section = "db"
 
 config = MyConfigReader()
-logger = MyLogger("esportenet_bot.py", config.get(logging_section, "log_path"))
+logger = MyLogger("esportenet_bot.py")
 
 def read_token():
 	logger.info("Attempting to read bot token")
@@ -104,11 +104,16 @@ def bot_init():
 	job_q = updater.job_queue
 
 	# Determine remaining seconds until next digest message (1 per day)
-	today = datetime(year=datetime.today().year,
+	current_day = datetime(year=datetime.today().year,
 					 month=datetime.today().month,
 					 day=datetime.today().day)
-	target = today + timedelta(days=1, hours=int(config.get(telegram_section, "digest_schedule_hour")))
-	deltaseconds = (target - datetime.now()).total_seconds()
+	logger.debug("Current day: {}".format(current_day))
+	target = current_day + timedelta(hours=int(config.get(telegram_section, "digest_schedule_hour")))
+	logger.debug("Base digest target: {}".format(target))
+	if target < datetime.today():
+		target = target + timedelta(days=1)
+		logger.debug("Target too early. Postpone one day: {}".format(target))
+	deltaseconds = (target - datetime.today()).total_seconds()
 	logger.info("Next digest: {} - deltaseconds: {}".format(target, deltaseconds))
 
 	# Add new Job to the dispatcher's job queue.

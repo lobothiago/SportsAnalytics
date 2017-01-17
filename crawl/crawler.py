@@ -13,7 +13,7 @@ crawler_section = "crawler"
 logging_section = "logging"
 
 config = MyConfigReader(config_path)
-logger = MyLogger("crawler.py", config.get(logging_section, "log_path"))
+logger = MyLogger("crawler.py")
 
 bets_api_url = config.get(crawler_section, "bets_api_url")
 bets_params = config.get(crawler_section, "bets_params")

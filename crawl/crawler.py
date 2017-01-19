@@ -9,7 +9,9 @@ from my_logger import MyLogger
 from my_config_reader import MyConfigReader
 from my_db import SQLDb
 import re
-from string_similarity import similar
+from string_similarity import list_similarity
+from prettytable import PrettyTable
+from pprint import pprint 
 
 class Crawler():
     
@@ -61,31 +63,25 @@ class Crawler():
         return json.load(response)
 
     def filter_team_name(self, name):
+        # Default return values
         age_group = -1
         new_key = name
         
-        age_tag_en = re.compile(r"(u{1})\s*[0-9].", re.IGNORECASE)
-        match = age_tag_en.search(name)
+        # Regex expressions
+        age_tag = re.compile(r"\s*([-|/|\s.]\s*)(sub|u|U)\s*[-|/]*[0-9]+", re.IGNORECASE)
+        number_tag = re.compile(r"[0-9]+", re.IGNORECASE)
+
+        # Try name match
+        name_match = age_tag.search(name)
         
-        if " sub-" in new_key:
-            print new_key
+        if name_match:
+            new_key = new_key[:name_match.start()].strip()
+            age_string = name_match.group()
+            number_match = number_tag.search(age_string)            
+            if number_match:
+                age_group = int(number_match.group())
 
-        if match:
-            new_key = (new_key[:match.start()] + new_key[match.end():]).strip()
-            age_group = int(name[match.start() + 1:match.end()])
-        else:
-            age_tag_pt = re.compile(r"sub\s*[0-9].", re.IGNORECASE)
-            match = age_tag_pt.search(name)
-            if match:
-                new_key = (new_key[:match.start()] + new_key[match.end():]).strip()
-                age_group = int(name[match.start() + 3:match.end()])
-
-        if "/" in new_key:
-            new_key = new_key[:new_key.index("/")]
-        elif "-" in new_key:
-            new_key = new_key[:new_key.index("-")]
-
-        return new_key.strip().replace("'", ""), age_group
+        return new_key.replace("'", ""), age_group
 
     # ESPORTENET CRAWLER METHODS
 
@@ -96,26 +92,35 @@ class Crawler():
         
         teams = self.retrieve_teams()
 
+        t = PrettyTable(['Full Name == Name', 'Full Name', 'Name', 'Age Group'])
+
         for bet in data:
             # date = datetime.strptime(bet["dt_hr_ini"], '%Y-%m-%dT%H:%M:00')
-            if "basquete" not in bet["camp_nome"]:
-                team_h, age_h = self.filter_team_name(bet["casa_time"])
-                team_v, age_v = self.filter_team_name(bet["visit_time"])
-                
-                if age_h != age_v:
-                    self.logger.warning(u"Teams age groups don't match: {} / {} - Got {}({}) / {}({})".format(bet["casa_time"], bet["visit_time"], team_h, age_h, team_v, age_v))
-
-
-                # if abs(bet["taxa_c"] - bet["taxa_f"]) > self.bet_rate_threshold:
-                teams_h = [x for x in teams if x[2] == age_h]
-                # print len(teams_h)
+            if "basquete" not in bet["camp_nome"].lower():
+                # Just process teams if the bet rate is interesting
+                if abs(bet["taxa_c"] - bet["taxa_f"]) > self.bet_rate_threshold:
+                    self.logger.info(u"Interesting bet rate for '{}' x '{}': {} x {} - delta: {} (thr: {})".format(bet["casa_time"], bet["visit_time"], bet["taxa_c"], bet["taxa_f"], abs(bet["taxa_c"] - bet["taxa_f"]), self.bet_rate_threshold))
                     
-                    # print u"{}({}) x {}({})".format(bet["casa_time"], bet["taxa_c"], bet["visit_time"], bet["taxa_f"])
+                    team_h, age_h = self.filter_team_name(bet["casa_time"])
+                    team_v, age_v = self.filter_team_name(bet["visit_time"])
+                    
+                    t.add_row([bet["casa_time"] == team_h, u"'{}'".format(bet["casa_time"]), u"'{}'".format(team_h), age_h])
+                    t.add_row([bet["visit_time"] == team_v, u"'{}'".format(bet["visit_time"]), u"'{}'".format(team_v), age_v])
+                    
+                    if age_h != age_v:
+                        self.logger.warning(u"Different age groups retrieved for '{}' vs '{}': {} and {}".format(bet["casa_time"], bet["visit_time"], age_h, age_v))
+        
+                    sub_group = [x for x in teams if x[2] == age_v]
+                    option_names = [x[0].lower() for x in sub_group]
 
-        # with open('output.json', 'w') as f:
-        #     f.write(json.dumps(data, indent=4, sort_keys=True))
-        #     f.close()
+                    print u"'{}'' x '{}'".format(bet["casa_time"], bet["visit_time"])
 
+                    pprint([(sub_group[y], x) for (x, y) in list_similarity(team_h.lower(), option_names, 20)])
+                    print "\n"
+                    pprint([(sub_group[y], x) for (x, y) in list_similarity(team_v.lower(), option_names, 20)])
+                    print "\n"
+
+        self.logger.info(u"Team name decoding result:\n{}".format(t))
 
     # SOCCERWAY CRAWLER METHODS
 
@@ -164,8 +169,10 @@ class Crawler():
 
             new_key, age_group = self.filter_team_name(k)
 
-            self.logger.debug(u"Trying to store team: {}, {}, {}, {}".format(k, v, age_group, m))    
-            if not db.row_exists(self.teams_table_name, u"name='{}' AND sub={}".format(new_key, age_group)):
+            self.logger.debug(u"Trying to store team: {}, {}, {}, {}".format(k, v, age_group, m))
+
+            # if not db.row_exists(self.teams_table_name, u"name='{}' AND sub={}".format(new_key, age_group)):
+            if not db.row_exists(self.teams_table_name, u"url='{}'".format(v)):
                 db.execute(u""" 
                     INSERT INTO {} (name, url, sub, m)
                     VALUES ('{}', '{}', {}, {});
@@ -232,12 +239,14 @@ class Crawler():
                 self.logger.info("{} competition ids retrieved for country #{}".format(len(comp_ids), country_id))
                 for comp_id in comp_ids:
                     comp_data = self.crawl_comp_data(comp_id)
-                    teams.extend(self.extract_teams(comp_data))
-                    self.logger.info("{} teams retrieved for comp #{}".format(len(teams), comp_id))
+                    new_teams = self.extract_teams(comp_data)
+                    teams.extend(new_teams)
+                    self.logger.info("{} teams retrieved for comp #{}".format(len(new_teams), comp_id))
             else:
                 self.logger.debug("Direct teams found for country #{}".format(country_id))
-                teams.extend(self.extract_teams(country_data))
-                self.logger.info("{} teams retrieved for comp #{}".format(len(teams), country_id))
+                new_teams = self.extract_teams(country_data)                
+                teams.extend(new_teams)
+                self.logger.info("{} teams retrieved for comp #{}".format(len(new_teams), country_id))
             
             for team in teams:
                 if not team[0] in database:
@@ -245,10 +254,13 @@ class Crawler():
 
         self.store_teams(database)
                         
+
+
 if __name__ == '__main__':
     crawler = Crawler()
+    crawler.build_team_database()
     # crawler.retrieve_teams()
-    crawler.crawl_bets()
+    # crawler.crawl_bets()
     
 # Team Page:
 # -> Title: div id='subheading'

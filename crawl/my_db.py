@@ -14,7 +14,7 @@ class SQLDb():
         return self.cursor.fetchone()[0]
 
     def row_exists(self, table, condition):
-        self.cursor.execute(u"SELECT EXISTS(SELECT * FROM {} WHERE {} LIMIT 1);".format(table, condition))
+        self.cursor.execute(u"SELECT EXISTS(SELECT * FROM '{}' WHERE {} LIMIT 1);".format(table, condition))
         return self.cursor.fetchone()[0]
 
     def execute(self, command):

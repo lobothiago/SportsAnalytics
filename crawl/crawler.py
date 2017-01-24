@@ -31,7 +31,8 @@ class Crawler():
     bet_rate_threshold = float(config.get(crawler_section, "bet_rate_threshold"))
     bet_search_depth = int(config.get(crawler_section, "bet_search_depth"))
     match_day_window = int(config.get(crawler_section, "match_day_window"))
-    match_hour_threshold = int(config.get(crawler_section, "match_hour_threshold"))
+    match_hour_threshold = float(config.get(crawler_section, "match_hour_threshold"))
+    delta_hours = int(config.get(crawler_section, "delta_hours"))
 
     db_name = config.get(db_section, "db_name")
     teams_table_name = config.get(db_section, "teams_table_name")
@@ -104,7 +105,6 @@ class Crawler():
         return name, age
 
     # ESPORTENET CRAWLER METHODS
-
     def crawl_bets(self):
         self.logger.info("Starting bet crawling procedure")
 
@@ -119,11 +119,14 @@ class Crawler():
                 # Just process teams if the bet rate is interesting
                 if abs(bet["taxa_c"] - bet["taxa_f"]) > self.bet_rate_threshold:
                     self.logger.info(u"Interesting bet rate for '{}' x '{}': {} x {} - delta: {} (thr: {})".format(bet["casa_time"], bet["visit_time"], bet["taxa_c"], bet["taxa_f"], abs(bet["taxa_c"] - bet["taxa_f"]), self.bet_rate_threshold))
-                    match_dt = datetime.strptime(bet["dt_hr_ini"], '%Y-%m-%dT%H:%M:00')
-                    match_date = match_dt.strftime(self.date_storage_format)
+                    bet_dt = datetime.strptime(bet["dt_hr_ini"], '%Y-%m-%dT%H:%M:00')
+                    bet_date = bet_dt.strftime(self.date_storage_format)
                                     
-                    if not db.table_exists(match_date):
-                        # self.logger.info("")
+                    if not db.table_exists(bet_date):
+                        self.logger.info("No matches for date {} in database. Skipping".format(bet_dt))
+                        continue
+
+                    bet_comparison_dt = datetime.strptime(bet_dt.strftime(self.time_storage_format), self.time_storage_format)
 
                     team_h, age_h = self.filter_team_name(bet["casa_time"])
                     team_v, age_v = self.filter_team_name(bet["visit_time"])
@@ -133,6 +136,29 @@ class Crawler():
 
                     if age_h != age_v:
                         self.logger.warning(u"Different age groups retrieved for '{}' vs '{}': {} and {}".format(bet["casa_time"], bet["visit_time"], age_h, age_v))
+
+                    date_matches = db.execute_group(u"""SELECT * FROM '{}'""".format(bet_date))
+                    match_dts = [datetime.strptime(x[5], self.time_storage_format) for x in date_matches]
+
+                    close_matches = []
+
+                    for index, match_dt in enumerate(match_dts):
+                        if abs((bet_comparison_dt - match_dt).total_seconds()) <= self.match_hour_threshold * 60 * 60:
+                            close_matches.append(date_matches[index])                    
+
+                    if not len(close_matches) > 0:
+                        self.logger.info("No matches within tolerance for bet at date {}".format(bet_dt))
+                        continue
+                    
+                    print u"{} x {} - {}\n{}\n".format(bet["casa_time"], bet["visit_time"], bet["dt_hr_ini"], bet_comparison_dt)
+                    pprint(close_matches)
+                    print "\n"
+
+                    # with open("output.txt", "a") as f:
+                    #     f.write(u"{} x {} - {}\n\n".format(bet["casa_time"], bet["visit_time"], bet["dt_hr_ini"]))
+                    #     f.write(u"{}".format(date_matches))
+                    #     f.close()
+                    # pprint(date_matches)
 
         self.logger.info(u"Team name decoding result:\n{}".format(t))
 
@@ -145,7 +171,11 @@ class Crawler():
         today_dt = datetime(year=datetime.now().year, month=datetime.now().month, day=datetime.now().day)
 
         time = match.find('td', attrs={'class':'status'}).a.span.string.replace(" ", "").strip()
-        
+        dt_time = datetime.strptime(time, self.time_storage_format)
+        dt_time = dt_time + timedelta(days=1)
+        dt_time = dt_time - timedelta(hours=self.delta_hours)
+        time = dt_time.strftime(self.time_storage_format)
+
         try:
             match_url = self.data_url + match.find('td', attrs={'class':'info-button'}).a.get("href")
         except Exception as e:
@@ -200,7 +230,7 @@ class Crawler():
                 VALUES ('{}', '{}', '{}', '{}', '{}', '{}');
             """.format(date, match_url, h_name, v_name, h_url, v_url, time))
 
-            self.logger.debug(u"New match stored at {}: {}".format(date, match_url))
+            self.logger.debug(u"New match stored at {} {}: {}".format(date, time, match_url))
 
     def crawl_matches_by_day(self, dt):
         day_string_url = dt.strftime("%Y/%m/%d")
@@ -404,7 +434,7 @@ if __name__ == '__main__':
     crawler.crawl_bets()
     # crawler.crawl_matches()
     # db = SQLDb(crawler.db_name)
-    # data = db.execute_group("SELECT match_url FROM '17/01/23'")
+    # data = db.execute_group("SELECT match_url, hour FROM '17/01/25'")
     # pprint(data)
 
         

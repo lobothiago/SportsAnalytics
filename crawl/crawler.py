@@ -149,23 +149,39 @@ class Crawler():
                     if not len(close_matches) > 0:
                         self.logger.info("No matches within tolerance for bet at date {}".format(bet_dt))
                         continue
-                    
-                    print u"{} x {} - {}\n{}\n".format(bet["casa_time"], bet["visit_time"], bet["dt_hr_ini"], bet_comparison_dt)
-                    pprint(close_matches)
-                    print "\n"
 
-                    # with open("output.txt", "a") as f:
-                    #     f.write(u"{} x {} - {}\n\n".format(bet["casa_time"], bet["visit_time"], bet["dt_hr_ini"]))
-                    #     f.write(u"{}".format(date_matches))
-                    #     f.close()
-                    # pprint(date_matches)
+                    close_matches_team_h = [x[1].lower() for x in close_matches]
+                    close_matches_team_v = [x[2].lower() for x in close_matches]
+                    scores_h = list_similarity(team_h.lower(), close_matches_team_h, 10)
+                    scores_v = list_similarity(team_v.lower(), close_matches_team_v, 10)
+
+                    scores = scores_h
+
+                    for score_v in scores_v:
+                        index = [i for i, x in enumerate(scores) if x[1] == score_v[1]]
+                        if len(index) > 0:
+                            scores[index[0]] = (scores[index[0]][0] + score_v[0], score_v[1])
+                        else:
+                            scores.append(score_v)
+
+                    most_likely_matches = [close_matches[x[1]][0] for x in sorted(scores, reverse=True)]
+
+                    print u"{} x {} - {}\n".format(bet["casa_time"], bet["visit_time"], bet["dt_hr_ini"])
+                    pprint(most_likely_matches[:5])
+                    # pprint([(close_matches_team_h[y], x) for (x, y) in list_similarity(team_h.lower(), close_matches_team_h, 10)])
+                    # print "\n"
+                    # pprint([(close_matches_team_v[y], x) for (x, y) in list_similarity(team_v.lower(), close_matches_team_v, 10)])
+                    # print "\n"
+
+                    # pprint(close_matches)
+                    print "\n"
 
         self.logger.info(u"Team name decoding result:\n{}".format(t))
 
     # SOCCERWAY CRAWLER METHODS
-    def store_match(self, match):
-        date = match.find('td', attrs={'class':'date'}).string.strip()
-        dt = datetime.strptime(date, '%d/%m/%y')
+    def store_match(self, match, dt):
+        # date = match.find('td', attrs={'class':'date'}).string.strip()
+        # dt = datetime.strptime(date, '%d/%m/%y')
         date = dt.strftime(self.date_storage_format)
 
         today_dt = datetime(year=datetime.now().year, month=datetime.now().month, day=datetime.now().day)
@@ -209,9 +225,41 @@ class Crawler():
             self.logger.warning(u"h_age ({}) != v_age ({}) for match: {}".format(h_age, v_age, match_url))
 
         db = SQLDb(self.db_name)
+
+        if not db.row_exists(date, "match_url='{}'".format(match_url)):
+            db.execute(u""" 
+                INSERT INTO '{}' (match_url, a_name, b_name, a_url, b_url, hour)
+                VALUES ('{}', '{}', '{}', '{}', '{}', '{}');
+            """.format(date, match_url, h_name, v_name, h_url, v_url, time))
+
+            self.logger.debug(u"New match stored at {} {}: {}".format(date, time, match_url))
+
+    def crawl_match_data(self, stage_value, competition_id, dt):
+        payload = dict(
+            block_id=urllib.quote('page_matches_1_block_date_matches_1'),
+            callback_params=urllib.quote("""{{"bookmaker_urls":{{"13":[{{"link":"http://www.bet365.com/home/?affiliate=365_371546","name":"Bet 365"}}]}},
+                                             "block_service_id":"matches_index_block_datematches",
+                                             "date":"{}",
+                                             "stage-value":"{}"}}""".format(dt.strftime("%Y-%m-%d"), stage_value)),
+            action=urllib.quote('showMatches'),
+            params=urllib.quote('{{"competition_id":{}}}'.format(competition_id))
+        )
+
+        request_url = self.data_url + '/a/block_date_matches?block_id={block_id}&callback_params={callback_params}&action={action}&params={params}'.format(**payload)
         
-        if not db.table_exists(date):
-            self.logger.info(u"Table for day {} does not exist. Creating now".format(date))
+        data = self.parse_json(request_url)
+        html = BeautifulSoup(data['commands'][0]['parameters']['content'].rstrip('\n'), 'html.parser')
+        
+        return html
+
+    def crawl_matches_by_day(self, dt):
+        date_url = dt.strftime("%Y/%m/%d")
+        date_db = dt.strftime(self.date_storage_format)
+
+        db = SQLDb(self.db_name)
+        
+        if not db.table_exists(date_db):
+            self.logger.info(u"Table for day {} does not exist. Creating now".format(date_db))
             db.execute(u"""
                 CREATE TABLE '{}'
                 (
@@ -222,34 +270,33 @@ class Crawler():
                     b_url varchar(256),
                     hour varchar(32)
                 );
-            """.format(date))
-
-        if not db.row_exists(date, "match_url='{}'".format(match_url)):
-            db.execute(u""" 
-                INSERT INTO '{}' (match_url, a_name, b_name, a_url, b_url, hour)
-                VALUES ('{}', '{}', '{}', '{}', '{}', '{}');
-            """.format(date, match_url, h_name, v_name, h_url, v_url, time))
-
-            self.logger.debug(u"New match stored at {} {}: {}".format(date, time, match_url))
-
-    def crawl_matches_by_day(self, dt):
-        day_string_url = dt.strftime("%Y/%m/%d")
+            """.format(date_db))
 
         url = self.data_url + "/matches/{}/".format(dt.strftime("%Y/%m/%d"))
-        self.logger.info("URL for day {} is: {}".format(day_string_url, url))
+        self.logger.info("URL for day {} is: {}".format(date_url, url))
         
         parsed_html = self.parse_html(url)
 
-        competition_links = parsed_html.find_all('th', attrs={'class':'competition-link'})
-        competition_urls = [self.data_url + x.a.get('href') for x in competition_links]
+        group_heads = parsed_html.find_all("tr", attrs={'class':'group-head'})
 
-        self.logger.info("Found {} competitions found for day {}".format(len(competition_urls), day_string_url))
+        self.logger.info("Found {} group heads".format(len(group_heads)))
 
-        for competition_url in competition_urls:
-            competition_html = self.parse_html(competition_url)
+        for group_head in group_heads:
+            stage_value = group_head.get("stage-value")
+            competition_id = group_head.get("id").replace("date_matches-", "") 
             
-            matches = competition_html.find_all("tr", attrs={'class':'no-date-repetition', 'class':'match'})
-            self.logger.info("Found {} matches".format(len(matches)))
+            if "-" in competition_id:
+                competition_id = competition_id[:competition_id.index("-")]
+            
+            self.logger.debug("Retrieving matches for 'stage_value:{}' 'competition_id:{}'".format(stage_value, competition_id))
+
+            matches_html = self.crawl_match_data(stage_value, competition_id, dt)
+
+            # self.logger.debug("HTML content: \n{}".format(matches_html.prettify().encode("utf-8")))
+
+            matches = matches_html.find_all("tr", attrs={'class':'no-date-repetition', 'class':'match'})
+            
+            self.logger.debug("{} matches retrieved".format(len(matches)))
             
             for match in matches:                
                 # If future match -> class status
@@ -258,7 +305,7 @@ class Crawler():
 
                 # If contains span, not cancelled or postponed. Contains time instead
                 if len(future_match) > 0 and future_match[0].a.span:
-                    self.store_match(match)
+                    self.store_match(match, dt)
 
     def clear_old_match_tables(self):
         self.logger.info(u"Cleaning old match tables")
@@ -433,10 +480,11 @@ if __name__ == '__main__':
     # crawler.build_team_database()
     crawler.crawl_bets()
     # crawler.crawl_matches()
+    # crawler.crawl_matches_by_day(datetime.now())
+    # print crawler.crawl_match_data("6", "138", datetime.now()).prettify().encode('utf-8')
     # db = SQLDb(crawler.db_name)
-    # data = db.execute_group("SELECT match_url, hour FROM '17/01/25'")
+    # data = db.execute_group("SELECT match_url, hour FROM '17/01/29'")
     # pprint(data)
-
         
 # Team Page:
 # -> Title: div id='subheading'

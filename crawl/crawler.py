@@ -46,28 +46,28 @@ class Crawler():
     # HELPER METHODS
 
     def parse_html(self, url):
-        stop = False
         self.logger.debug("Attempting to retrieve HTML from URL: {}".format(url))
-        while not stop:
+        trials = 0
+        while trials < 1024:
             try:
                 response = urllib2.urlopen(url)
-                stop = True
+                trials = 1024
             except Exception as e:
-                self.logger.error("Couldn't retrieve HTML. Exception: {}".format(e.message))
-                stop = False
+                self.logger.error("Trial {}/1024 couldn't retrieve HTML. Exception: {}".format(trials + 1, e.message))
+                trials += 1
         html = response.read()
         return BeautifulSoup(html, 'html.parser')
 
     def parse_json(self, url):
-        stop = False
         self.logger.debug("Attempting to retrieve JSON from URL: {}".format(url))
-        while not stop:
+        trials = 0
+        while trials < 1024:
             try:
                 response = urllib2.urlopen(url)
-                stop = True
+                trials = 1024
             except Exception as e:
-                self.logger.error("Couldn't retrieve JSON. Exception: {}".format(e.message))
-                stop = False
+                self.logger.error("Trial {}/1024 couldn't retrieve JSON. Exception: {}".format(trials + 1, e.message))
+                trials += 1
         return json.load(response)
 
     def filter_team_name(self, name):
@@ -92,7 +92,11 @@ class Crawler():
         filtered_name = filtered_name.replace("'", "")
 
         if "-" in filtered_name:
-            filtered_name = filtered_name[:filtered_name.index("-")]
+            next_chars = filtered_name[filtered_name.index("-") + 1:].replace(" ", "")
+            if len(next_chars) > 2:
+                filtered_name = " ".join(filtered_name.replace("-", " ").split())
+            else:
+                filtered_name = filtered_name[:filtered_name.index("-")]
 
         if "/" in filtered_name:
             filtered_name = filtered_name[:filtered_name.index("/")]
@@ -113,15 +117,16 @@ class Crawler():
         data = self.parse_json(self.bets_api_url + urllib.quote(self.bets_params.format(datetime.now().year, datetime.now().month, datetime.now().day)))
         
         t = PrettyTable(['Full Name == Name', 'Full Name', 'Name', 'Age Group'])
-
+        
         for bet in data:
             if "basquete" not in bet["camp_nome"].lower():
                 # Just process teams if the bet rate is interesting
-                if abs(bet["taxa_c"] - bet["taxa_f"]) > self.bet_rate_threshold:
-                    self.logger.info(u"Interesting bet rate for '{}' x '{}': {} x {} - delta: {} (thr: {})".format(bet["casa_time"], bet["visit_time"], bet["taxa_c"], bet["taxa_f"], abs(bet["taxa_c"] - bet["taxa_f"]), self.bet_rate_threshold))
+                bet_delta_rate = abs(bet["taxa_c"] - bet["taxa_f"])
+                if bet_delta_rate > self.bet_rate_threshold:
+                    self.logger.info(u"Interesting bet rate for '{}' x '{}': {} x {} - delta: {} (thr: {})".format(bet["casa_time"], bet["visit_time"], bet["taxa_c"], bet["taxa_f"], bet_delta_rate, self.bet_rate_threshold))
                     bet_dt = datetime.strptime(bet["dt_hr_ini"], '%Y-%m-%dT%H:%M:00')
                     bet_date = bet_dt.strftime(self.date_storage_format)
-                                    
+
                     if not db.table_exists(bet_date):
                         self.logger.info("No matches for date {} in database. Skipping".format(bet_dt))
                         continue
@@ -155,6 +160,7 @@ class Crawler():
                     scores_h = list_similarity(team_h.lower(), close_matches_team_h, 10)
                     scores_v = list_similarity(team_v.lower(), close_matches_team_v, 10)
 
+                    # This line and the next for loop are supposed to merge scores_h and scores_v
                     scores = scores_h
 
                     for score_v in scores_v:
@@ -164,16 +170,11 @@ class Crawler():
                         else:
                             scores.append(score_v)
 
-                    most_likely_matches = [close_matches[x[1]][0] for x in sorted(scores, reverse=True)]
+                    most_likely_matches = [(close_matches[x[1]][0], x[0] / 2) for x in sorted(scores, reverse=True)]
 
                     print u"{} x {} - {}\n".format(bet["casa_time"], bet["visit_time"], bet["dt_hr_ini"])
                     pprint(most_likely_matches[:5])
-                    # pprint([(close_matches_team_h[y], x) for (x, y) in list_similarity(team_h.lower(), close_matches_team_h, 10)])
-                    # print "\n"
-                    # pprint([(close_matches_team_v[y], x) for (x, y) in list_similarity(team_v.lower(), close_matches_team_v, 10)])
-                    # print "\n"
-
-                    # pprint(close_matches)
+                    
                     print "\n"
 
         self.logger.info(u"Team name decoding result:\n{}".format(t))

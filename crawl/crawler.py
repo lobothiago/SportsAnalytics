@@ -108,77 +108,6 @@ class Crawler():
 
         return name, age
 
-    # ESPORTENET CRAWLER METHODS
-    def crawl_bets(self):
-        self.logger.info("Starting bet crawling procedure")
-
-        db = SQLDb(self.db_name)
-
-        data = self.parse_json(self.bets_api_url + urllib.quote(self.bets_params.format(datetime.now().year, datetime.now().month, datetime.now().day)))
-        
-        t = PrettyTable(['Full Name == Name', 'Full Name', 'Name', 'Age Group'])
-        
-        for bet in data:
-            if "basquete" not in bet["camp_nome"].lower():
-                # Just process teams if the bet rate is interesting
-                bet_delta_rate = abs(bet["taxa_c"] - bet["taxa_f"])
-                if bet_delta_rate > self.bet_rate_threshold:
-                    self.logger.info(u"Interesting bet rate for '{}' x '{}': {} x {} - delta: {} (thr: {})".format(bet["casa_time"], bet["visit_time"], bet["taxa_c"], bet["taxa_f"], bet_delta_rate, self.bet_rate_threshold))
-                    bet_dt = datetime.strptime(bet["dt_hr_ini"], '%Y-%m-%dT%H:%M:00')
-                    bet_date = bet_dt.strftime(self.date_storage_format)
-
-                    if not db.table_exists(bet_date):
-                        self.logger.info("No matches for date {} in database. Skipping".format(bet_dt))
-                        continue
-
-                    bet_comparison_dt = datetime.strptime(bet_dt.strftime(self.time_storage_format), self.time_storage_format)
-
-                    team_h, age_h = self.filter_team_name(bet["casa_time"])
-                    team_v, age_v = self.filter_team_name(bet["visit_time"])
-                    
-                    t.add_row([bet["casa_time"] == team_h, u"'{}'".format(bet["casa_time"]), u"'{}'".format(team_h), age_h])
-                    t.add_row([bet["visit_time"] == team_v, u"'{}'".format(bet["visit_time"]), u"'{}'".format(team_v), age_v])
-
-                    if age_h != age_v:
-                        self.logger.warning(u"Different age groups retrieved for '{}' vs '{}': {} and {}".format(bet["casa_time"], bet["visit_time"], age_h, age_v))
-
-                    date_matches = db.execute_group(u"""SELECT * FROM '{}'""".format(bet_date))
-                    match_dts = [datetime.strptime(x[5], self.time_storage_format) for x in date_matches]
-
-                    close_matches = []
-
-                    for index, match_dt in enumerate(match_dts):
-                        if abs((bet_comparison_dt - match_dt).total_seconds()) <= self.match_hour_threshold * 60 * 60:
-                            close_matches.append(date_matches[index])                    
-
-                    if not len(close_matches) > 0:
-                        self.logger.info("No matches within tolerance for bet at date {}".format(bet_dt))
-                        continue
-
-                    close_matches_team_h = [x[1].lower() for x in close_matches]
-                    close_matches_team_v = [x[2].lower() for x in close_matches]
-                    scores_h = list_similarity(team_h.lower(), close_matches_team_h, 10)
-                    scores_v = list_similarity(team_v.lower(), close_matches_team_v, 10)
-
-                    # This line and the next for loop are supposed to merge scores_h and scores_v
-                    scores = scores_h
-
-                    for score_v in scores_v:
-                        index = [i for i, x in enumerate(scores) if x[1] == score_v[1]]
-                        if len(index) > 0:
-                            scores[index[0]] = (scores[index[0]][0] + score_v[0], score_v[1])
-                        else:
-                            scores.append(score_v)
-
-                    most_likely_matches = [(close_matches[x[1]][0], x[0] / 2) for x in sorted(scores, reverse=True)]
-
-                    print u"{} x {} - {}\n".format(bet["casa_time"], bet["visit_time"], bet["dt_hr_ini"])
-                    pprint(most_likely_matches[:5])
-                    
-                    print "\n"
-
-        self.logger.info(u"Team name decoding result:\n{}".format(t))
-
     # SOCCERWAY CRAWLER METHODS
     def store_match(self, match, dt):
         # date = match.find('td', attrs={'class':'date'}).string.strip()
@@ -476,21 +405,110 @@ class Crawler():
             for team in teams:
                 self.store_team(team)
 
+    def analyse_matches(self, match):
+        return
+
+    # ESPORTENET CRAWLER METHODS
+    def crawl_bets(self):
+        self.logger.info("Starting bet crawling procedure")
+
+        db = SQLDb(self.db_name)
+
+        data = self.parse_json(self.bets_api_url + urllib.quote(self.bets_params.format(datetime.now().year, datetime.now().month, datetime.now().day)))
+        
+        t = PrettyTable(['Full Name == Name', 'Full Name', 'Name', 'Age Group'])
+
+        result = []
+
+        for bet in data:
+            if "basquete" not in bet["camp_nome"].lower():
+                # Just process teams if the bet rate is interesting
+                bet_delta_rate = abs(bet["taxa_c"] - bet["taxa_f"])
+                if bet_delta_rate > self.bet_rate_threshold:
+                    self.logger.info(u"Interesting bet rate for '{}' x '{}': {} x {} - delta: {} (thr: {})".format(bet["casa_time"], bet["visit_time"], bet["taxa_c"], bet["taxa_f"], bet_delta_rate, self.bet_rate_threshold))
+                    bet_dt = datetime.strptime(bet["dt_hr_ini"], '%Y-%m-%dT%H:%M:00')
+                    bet_date = bet_dt.strftime(self.date_storage_format)
+
+                    if not db.table_exists(bet_date):
+                        self.logger.info("No matches for date {} in database. Skipping".format(bet_dt))
+                        continue
+
+                    bet_comparison_dt = datetime.strptime(bet_dt.strftime(self.time_storage_format), self.time_storage_format)
+
+                    team_h, age_h = self.filter_team_name(bet["casa_time"])
+                    team_v, age_v = self.filter_team_name(bet["visit_time"])
+                    
+                    t.add_row([bet["casa_time"] == team_h, u"'{}'".format(bet["casa_time"]), u"'{}'".format(team_h), age_h])
+                    t.add_row([bet["visit_time"] == team_v, u"'{}'".format(bet["visit_time"]), u"'{}'".format(team_v), age_v])
+
+                    if age_h != age_v:
+                        self.logger.warning(u"Different age groups retrieved for '{}' vs '{}': {} and {}".format(bet["casa_time"], bet["visit_time"], age_h, age_v))
+
+                    date_matches = db.execute_group(u"""SELECT * FROM '{}'""".format(bet_date))
+                    match_dts = [datetime.strptime(x[5], self.time_storage_format) for x in date_matches]
+
+                    close_matches = []
+
+                    for index, match_dt in enumerate(match_dts):
+                        if abs((bet_comparison_dt - match_dt).total_seconds()) <= self.match_hour_threshold * 60 * 60:
+                            close_matches.append(date_matches[index])                    
+
+                    if not len(close_matches) > 0:
+                        self.logger.info("No matches within tolerance for bet at date {}".format(bet_dt))
+                        continue
+
+                    close_matches_team_h = [x[1].lower() for x in close_matches]
+                    close_matches_team_v = [x[2].lower() for x in close_matches]
+                    scores_h = list_similarity(team_h.lower(), close_matches_team_h, 10)
+                    scores_v = list_similarity(team_v.lower(), close_matches_team_v, 10)
+
+                    # This line and the next for loop are supposed to merge scores_h and scores_v
+                    scores = scores_h
+
+                    for score_v in scores_v:
+                        index = [i for i, x in enumerate(scores) if x[1] == score_v[1]]
+                        if len(index) > 0:
+                            scores[index[0]] = (scores[index[0]][0] + score_v[0], score_v[1])
+                        else:
+                            scores.append(score_v)
+
+                    most_likely_matches_display = [(close_matches[x[1]][0], x[0] / 2) for x in sorted(scores, reverse=True)]
+                    most_likely_matches = [(close_matches[x[1]], x[0] / 2) for x in sorted(scores, reverse=True)]
+                    
+                    for i in range(5):
+                        if i >= len(most_likely_matches):
+                            continue
+                    
+                    analysis_result = self.analyse_matches(most_likely_matches[:5])
+                    
+                    sub_result = dict(
+                        h_team = bet["casa_time"],
+                        h_rate = bet["taxa_c"],
+                        v_team = bet["visit_time"],
+                        v_rate = bet["taxa_f"],
+                        delta_rate = bet_delta_rate,
+                        timestamp = bet_dt,
+                        analysis = analysis_result
+                    )
+
+                    result.append(sub_result)
+                    
+                    # print u"{} x {} - {}\n".format(bet["casa_time"], bet["visit_time"], bet_dt)
+                    # pprint(most_likely_matches_display[:5])                      
+                    # print "\n"
+
+        self.logger.info(u"Team name decoding result:\n{}".format(t))
+
+        return result
+
 if __name__ == '__main__':
     crawler = Crawler()
-    # crawler.build_team_database()
     crawler.crawl_bets()
     # crawler.crawl_matches()
     # crawler.crawl_matches_by_day(datetime.now())
-    # print crawler.crawl_match_data("6", "138", datetime.now()).prettify().encode('utf-8')
     # db = SQLDb(crawler.db_name)
     # data = db.execute_group("SELECT match_url, hour FROM '17/01/29'")
     # pprint(data)
-        
-# Team Page:
-# -> Title: div id='subheading'
-# -> id: from URL
-# -> Matches: URL/matches
 
 # Testes:
 # distancia na tabela

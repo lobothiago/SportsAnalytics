@@ -108,6 +108,17 @@ class Crawler():
 
         return name, age
 
+    def team_id_from_url(self, url):
+        tag = re.compile(r"[/][0-9]+[/]", re.IGNORECASE)
+        id = -1
+        
+        match = tag.search(url)
+
+        if match:
+            id = int(match.group().replace("/", ""))
+
+        return id
+
     # SOCCERWAY CRAWLER METHODS
     def store_match(self, match, dt):
         # date = match.find('td', attrs={'class':'date'}).string.strip()
@@ -405,8 +416,70 @@ class Crawler():
             for team in teams:
                 self.store_team(team)
 
-    def analyse_matches(self, match):
-        return
+    def crawl_team_matches(self, team_id, home=True):
+        filter_param = "home"
+        
+        if not home:
+            filter_param = "away"
+
+        payload = dict(
+            block_id=urllib.quote('page_match_1_block_match_team_matches_14'),
+            callback_params=urllib.quote("""{{"page":"0", "bookmaker_urls":{{"13":[{{"link":"http://www.bet365.com/home/?affiliate=365_371546","name":"Bet 365"}}]}},
+                                              "block_service_id":"match_summary_block_matchteammatches",
+                                              "team_id":{},
+                                              "competition_id":"0",
+                                              "filter":"all"}}""".format(team_id)),
+            action=urllib.quote('filterMatches'),
+            params=urllib.quote('{{"filter":"{}"}}'.format(filter_param))
+        )
+
+        request_url = self.data_url + '/a/block_match_team_matches?block_id={block_id}&callback_params={callback_params}&action={action}&params={params}'.format(**payload)
+
+        data = self.parse_json(request_url)
+        html = BeautifulSoup(data['commands'][0]['parameters']['content'].rstrip('\n'), 'html.parser')
+
+        return html
+
+    def analyse_match(self, match_data):
+        match_html = self.parse_html(match_data["match_url"])
+        home_id = self.team_id_from_url(match_data["home_url"])
+        visit_id = self.team_id_from_url(match_data["visit_url"])
+
+        analysis_result = dict(
+            home_pos = -1,
+            visit_pos = -1,
+            delta_pos = -1,
+            
+            home_goals_home = -1,
+            home_goals_visit = -1,
+            home_wins_home = -1,
+            home_wins_visit = -1,
+            
+            visit_goals_home = -1,
+            visit_goals_visit = -1,
+            visit_wins_home = -1,
+            visit_wins_visit = -1
+        )
+
+        team_ranks = match_html.find_all("tr", attrs={'class':'highlight'})
+
+        if len(team_ranks) == 2:
+            for team_rank in team_ranks:
+                href = team_rank.find("a").get("href")
+                rank = int(team_rank.find("td", attrs={'class':'rank'}).string)
+                
+                if href in match_data["home_url"]:
+                    analysis_result["home_pos"] = rank
+
+                if href in match_data["visit_url"]:
+                    analysis_result["visit_pos"] = rank
+            analysis_result["delta_pos"] = abs(analysis_result["home_pos"] - analysis_result["visit_pos"])
+        
+        
+
+        match_data["analysis_result"] = analysis_result
+
+        return match_data
 
     # ESPORTENET CRAWLER METHODS
     def crawl_bets(self):
@@ -472,38 +545,46 @@ class Crawler():
                         else:
                             scores.append(score_v)
 
-                    most_likely_matches_display = [(close_matches[x[1]][0], x[0] / 2) for x in sorted(scores, reverse=True)]
-                    most_likely_matches = [(close_matches[x[1]], x[0] / 2) for x in sorted(scores, reverse=True)]
-                    
-                    for i in range(5):
-                        if i >= len(most_likely_matches):
-                            continue
-                    
-                    analysis_result = self.analyse_matches(most_likely_matches[:5])
-                    
+                    likely_matches = [(close_matches[x[1]], x[0] / 2) for x in sorted(scores, reverse=True)][:5]
+                    matches_data = []
+
+                    for likely_match in likely_matches:
+                        data = likely_match[0]
+                        score = likely_match[1]
+
+                        match_data = dict(
+                            match_url = data[0],
+                            home_url = data[3],
+                            visit_url = data[4],
+                            match_score = score
+                            # analysis_result = self.analyse_match(data[0])
+                        )
+
+                        match_data = self.analyse_match(match_data)
+
+                        matches_data.append(match_data)
+
                     sub_result = dict(
-                        h_team = bet["casa_time"],
-                        h_rate = bet["taxa_c"],
-                        v_team = bet["visit_time"],
-                        v_rate = bet["taxa_f"],
+                        home_name = bet["casa_time"],
+                        home_rate = bet["taxa_c"],
+                        visit_name = bet["visit_time"],
+                        visit_rate = bet["taxa_f"],
                         delta_rate = bet_delta_rate,
-                        timestamp = bet_dt,
-                        analysis = analysis_result
+                        timestamp = "{} {}".format(bet_dt.strftime(self.date_storage_format), bet_dt.strftime(self.time_storage_format)),
+                        matches = matches_data
                     )
 
                     result.append(sub_result)
-                    
-                    # print u"{} x {} - {}\n".format(bet["casa_time"], bet["visit_time"], bet_dt)
-                    # pprint(most_likely_matches_display[:5])                      
-                    # print "\n"
-
+                                        
         self.logger.info(u"Team name decoding result:\n{}".format(t))
 
         return result
 
 if __name__ == '__main__':
     crawler = Crawler()
-    crawler.crawl_bets()
+    # a = crawler.crawl_bets()
+    # pprint(a)
+    print crawler.crawl_team_matches(976).prettify()
     # crawler.crawl_matches()
     # crawler.crawl_matches_by_day(datetime.now())
     # db = SQLDb(crawler.db_name)
@@ -516,5 +597,4 @@ if __name__ == '__main__':
 # quantidade de gols dentro/fora (mesmo tempo)
 # vitorias/derrotas
 # ganha muito em casa e perde muito fora é um indicativo importante (comparar isso)
-
 # h2h (no mesmo ano?)

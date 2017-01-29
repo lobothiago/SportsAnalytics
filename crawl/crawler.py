@@ -40,9 +40,9 @@ class Crawler():
     date_storage_format = config.get(db_section, "date_storage_format")
     time_storage_format = config.get(db_section, "time_storage_format")
     
-    def __init__(self):
+    # def __init__(self):
         # self.build_team_database()
-        self
+        # self
 
     # HELPER METHODS
 
@@ -267,7 +267,13 @@ class Crawler():
         for table_name in table_names:
             if 'sqlite' in table_name:
                 continue
-            table_dt = datetime.strptime(table_name, self.date_storage_format)
+            
+            try:
+                table_dt = datetime.strptime(table_name, self.date_storage_format)
+            except Exception as e:
+                self.logger.info("Skipping non-dateful table: {}".format(e.message))
+                continue
+
             if table_dt < today_dt:
                 self.logger.info("Table '{}' in past. Dropping it".format(table_name))
                 db.execute("DROP TABLE '{}'".format(table_name))
@@ -528,7 +534,7 @@ class Crawler():
         
         with open(self.bets_file_name, "wb") as f:
             pickle.dump(result, f)
-        
+
         return result
 
 if __name__ == '__main__':

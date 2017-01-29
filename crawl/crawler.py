@@ -11,9 +11,7 @@ from my_db import SQLDb
 import re
 from string_similarity import list_similarity
 from prettytable import PrettyTable
-from pprint import pprint 
-from os.path import exists
-from os import makedirs
+from pprint import pprint
 
 class Crawler():
     
@@ -33,6 +31,7 @@ class Crawler():
     match_day_window = int(config.get(crawler_section, "match_day_window"))
     match_hour_threshold = float(config.get(crawler_section, "match_hour_threshold"))
     delta_hours = int(config.get(crawler_section, "delta_hours"))
+    old_match_tolerance = int(config.get(crawler_section, "old_match_tolerance"))
 
     db_name = config.get(db_section, "db_name")
     teams_table_name = config.get(db_section, "teams_table_name")
@@ -428,7 +427,7 @@ class Crawler():
                                               "block_service_id":"match_summary_block_matchteammatches",
                                               "team_id":{},
                                               "competition_id":"0",
-                                              "filter":"all"}}""".format(team_id)),
+                                              "filter":"home"}}""".format(team_id)),
             action=urllib.quote('filterMatches'),
             params=urllib.quote('{{"filter":"{}"}}'.format(filter_param))
         )
@@ -440,6 +439,39 @@ class Crawler():
 
         return html
 
+    def sum_matches_data(self, matches_data, tops=5, away=False):
+        result = dict(
+            goals = 0,
+            taken = 0,
+            matches = 0,
+            wins = 0
+        )
+
+        for match_data in matches_data[max(len(matches_data) - tops, 0):]:
+            match_dt = datetime.strptime(match_data.parent.parent.find("td", attrs={'class':'full-date'}).string, '%d/%m/%y')
+            
+            if (datetime.now() - match_dt).total_seconds() > self.old_match_tolerance:
+                continue
+
+            result["matches"] += 1
+
+            if "win" in match_data.get("class")[0]:
+                result["wins"] += 1
+
+            if match_data.span:
+                goals = match_data.span.next_sibling.replace("-", "").split()                
+            else:
+                goals = match_data.string.replace("-", "").split()
+
+            if away:
+                result["goals"] += int(re.sub(r"[^0-9]", "", goals[1]))
+                result["taken"] += int(re.sub(r"[^0-9]", "", goals[0]))
+            else:
+                result["goals"] += int(re.sub(r"[^0-9]", "", goals[0]))
+                result["taken"] += int(re.sub(r"[^0-9]", "", goals[1]))
+
+        return result
+
     def analyse_match(self, match_data):
         match_html = self.parse_html(match_data["match_url"])
         home_id = self.team_id_from_url(match_data["home_url"])
@@ -450,15 +482,25 @@ class Crawler():
             visit_pos = -1,
             delta_pos = -1,
             
-            home_goals_home = -1,
-            home_goals_visit = -1,
-            home_wins_home = -1,
-            home_wins_visit = -1,
+            home_goals_home = 0,
+            home_taken_home = 0,
+            home_matches_home = 0,
+            home_wins_home = 0,
             
-            visit_goals_home = -1,
-            visit_goals_visit = -1,
-            visit_wins_home = -1,
-            visit_wins_visit = -1
+            home_goals_visit = 0,
+            home_taken_visit = 0,
+            home_matches_visit = 0,
+            home_wins_visit = 0,
+            
+            visit_goals_home = 0,
+            visit_taken_home = 0,
+            visit_matches_home = 0,
+            visit_wins_home = 0,
+            
+            visit_goals_visit = 0,
+            visit_taken_visit = 0,
+            visit_matches_visit = 0,
+            visit_wins_visit = 0
         )
 
         team_ranks = match_html.find_all("tr", attrs={'class':'highlight'})
@@ -473,9 +515,37 @@ class Crawler():
 
                 if href in match_data["visit_url"]:
                     analysis_result["visit_pos"] = rank
+            
             analysis_result["delta_pos"] = abs(analysis_result["home_pos"] - analysis_result["visit_pos"])
         
-        
+        home_matches_home = self.crawl_team_matches(home_id).find_all("a", attrs={'class': re.compile(r"result-(win|loss|draw)")})
+        home_matches_away = self.crawl_team_matches(home_id, False).find_all("a", attrs={'class': re.compile(r"result-(win|loss|draw)")})
+        visit_matches_home = self.crawl_team_matches(visit_id).find_all("a", attrs={'class': re.compile(r"result-(win|loss|draw)")})
+        visit_matches_away = self.crawl_team_matches(visit_id, False).find_all("a", attrs={'class': re.compile(r"result-(win|loss|draw)")})
+
+        result = self.sum_matches_data(home_matches_home)
+        analysis_result["home_goals_home"] = result["goals"]
+        analysis_result["home_taken_home"] = result["taken"]
+        analysis_result["home_matches_home"] = result["matches"]
+        analysis_result["home_wins_home"] = result["wins"]
+
+        result = self.sum_matches_data(home_matches_away, away=True)
+        analysis_result["home_goals_visit"] = result["goals"]
+        analysis_result["home_taken_visit"] = result["taken"]
+        analysis_result["home_matches_visit"] = result["matches"]
+        analysis_result["home_wins_visit"] = result["wins"]
+
+        result = self.sum_matches_data(visit_matches_home)
+        analysis_result["visit_goals_home"] = result["goals"]
+        analysis_result["visit_taken_home"] = result["taken"]
+        analysis_result["visit_matches_home"] = result["matches"]
+        analysis_result["visit_wins_home"] = result["wins"]
+
+        result = self.sum_matches_data(visit_matches_away, away=True)
+        analysis_result["visit_goals_visit"] = result["goals"]
+        analysis_result["visit_taken_visit"] = result["taken"]
+        analysis_result["visit_matches_visit"] = result["matches"]
+        analysis_result["visit_wins_visit"] = result["wins"]
 
         match_data["analysis_result"] = analysis_result
 
@@ -556,12 +626,11 @@ class Crawler():
                             match_url = data[0],
                             home_url = data[3],
                             visit_url = data[4],
-                            match_score = score
-                            # analysis_result = self.analyse_match(data[0])
+                            match_score = score                        
                         )
 
                         match_data = self.analyse_match(match_data)
-
+                        
                         matches_data.append(match_data)
 
                     sub_result = dict(
@@ -575,22 +644,19 @@ class Crawler():
                     )
 
                     result.append(sub_result)
-                                        
+                    
         self.logger.info(u"Team name decoding result:\n{}".format(t))
 
         return result
 
 if __name__ == '__main__':
     crawler = Crawler()
-    # a = crawler.crawl_bets()
-    # pprint(a)
-    print crawler.crawl_team_matches(976).prettify()
-    # crawler.crawl_matches()
-    # crawler.crawl_matches_by_day(datetime.now())
-    # db = SQLDb(crawler.db_name)
-    # data = db.execute_group("SELECT match_url, hour FROM '17/01/29'")
-    # pprint(data)
-
+    
+    a = crawler.crawl_bets()
+    
+    with open("output.txt", "w") as f:
+        pprint(a, f)
+    
 # Testes:
 # distancia na tabela
 # ultimos 5 jogos (considerando casa/campeonato)

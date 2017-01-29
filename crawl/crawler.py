@@ -528,7 +528,7 @@ class Crawler():
         
         with open(self.bets_file_name, "wb") as f:
             pickle.dump(result, f)
-
+        
         return result
 
 if __name__ == '__main__':

@@ -12,6 +12,7 @@ import re
 from string_similarity import list_similarity
 from prettytable import PrettyTable
 from pprint import pprint
+import pickle
 
 class Crawler():
     
@@ -32,6 +33,7 @@ class Crawler():
     match_hour_threshold = float(config.get(crawler_section, "match_hour_threshold"))
     delta_hours = int(config.get(crawler_section, "delta_hours"))
     old_match_tolerance = int(config.get(crawler_section, "old_match_tolerance"))
+    bets_file_name = config.get(crawler_section, "bets_file_name")
 
     db_name = config.get(db_section, "db_name")
     teams_table_name = config.get(db_section, "teams_table_name")
@@ -279,142 +281,6 @@ class Crawler():
             search_dt = today_dt + timedelta(days=i)
             self.crawl_matches_by_day(search_dt)
 
-    def crawl_team_data(self, url, name_only=False):
-        result = {}
-        parsed_html = self.parse_html(url)
-        
-        result["name"], dummy = self.filter_team_name(parsed_html.find('div', attrs={'id':'subheading'}).h1.string)
-        
-        if name_only:
-            return result
-
-        return result
-
-    def crawl_country_data(self, country_id):
-        payload_country = dict(
-            block_id=urllib.quote('page_teams_1_block_teams_index_club_teams_2'),
-            callback_params=urllib.quote('{"level":1}'),
-            action=urllib.quote('expandItem'),
-            params=urllib.quote('{{"area_id":"{0}","level":2,"item_key":"area_id"}}'.format(country_id))
-        )
-
-        comps_request_url = self.data_url + '/a/block_teams_index_club_teams?block_id={block_id}&callback_params={callback_params}&action={action}&params={params}'.format(**payload_country)
-        
-        comps_data = self.parse_json(comps_request_url)
-        comps_html = BeautifulSoup(comps_data['commands'][0]['parameters']['content'].rstrip('\n'), 'html.parser')
-        
-        return comps_html
-
-    def crawl_comp_data(self, comp_id):
-        payload_comp = dict(
-            block_id=urllib.quote('page_teams_1_block_teams_index_club_teams_2'),
-            callback_params=urllib.quote('{"level":"3"}'),
-            action=urllib.quote('expandItem'),
-            params=urllib.quote('{{"competition_id":"{0}","level":3,"item_key":"competition_id"}}'.format(comp_id))
-        )
-
-        comp_data_request_url = self.data_url + '/a/block_teams_index_club_teams?block_id={block_id}&callback_params={callback_params}&action={action}&params={params}'.format(**payload_comp)
-
-        comp_data = self.parse_json(comp_data_request_url)
-        comp_html = BeautifulSoup(comp_data['commands'][0]['parameters']['content'].rstrip('\n'), 'html.parser')
-
-        return comp_html
-        
-    def extract_teams(self, html_data):        
-        hrefs = html_data.find_all('a')
-
-        result = [(x.string, self.data_url + x.get('href')) for x in hrefs if 'women' not in x.get('href')]
-
-        return result
-                
-    def store_team(self, team):
-        db = SQLDb(self.db_name)
-        
-        name = team[0]
-        url = team[1]
-        
-        m = 1 # No female teams for now
-        name, age_group = self.filter_team_name(name)
-        self.logger.debug(u"Trying to store team: {}, {}, {}, {}".format(name, url, age_group, m))
-
-        if not db.row_exists(self.teams_table_name, u"url='{}'".format(url)):
-            db.execute(u""" 
-                INSERT INTO '{}' (name, url, sub, m)
-                VALUES ('{}', '{}', {}, {});
-            """.format(self.teams_table_name, 
-                       name,
-                       url,
-                       age_group,
-                       m))
-
-            self.logger.info(u"New team stored: {}, {}, {}, {}".format(name, url, age_group, m))
-
-    def retrieve_teams_by_age(self, sub):
-        db = SQLDb(self.db_name)
-
-        matches = db.execute_group(""" 
-            SELECT name, url from {}
-            WHERE sub={}
-        """.format(self.teams_table_name, sub))
-
-        return matches
-
-    def retrieve_teams(self):
-        db = SQLDb(self.db_name)
-
-        matches = db.execute_group("""
-            SELECT name, url, sub from {}
-        """.format(self.teams_table_name))
-
-        return matches
-
-    def build_team_database(self):
-        self.logger.info("Starting team database update procedure")
-        self.logger.info("Initializing database: '{}'".format(self.db_name))
-
-        db = SQLDb(self.db_name)
-        
-        self.logger.info("Creating table: '{}'".format(self.teams_table_name))
-        if not db.table_exists(self.teams_table_name):
-            db.execute(""" 
-                CREATE TABLE '{}'
-                ( 
-                    name varchar(64),
-                    url varchar(256) PRIMARY KEY,
-                    sub INTEGER,
-                    m BOOLEAN
-                );
-            """.format(self.teams_table_name))
-        else:
-            self.logger.info("Table already existent")
-
-        parsed_html = self.parse_html(self.team_list_url)
-        country_ids = [x.get('data-area_id') for x in parsed_html.body.find('ul', attrs={'class':'areas'}).find_all('li', attrs={'class':'expandable'})]
-        
-        self.logger.info("{} country ids retrieved".format(len(country_ids)))
-
-        for country_id in country_ids:
-            country_data = self.crawl_country_data(country_id)
-            teams = []
-            
-            if country_data.find('ul', attrs={'class':'competitions'}) != None:
-                self.logger.debug("No direct teams found for country #{}. Will look for competitions".format(country_id))
-                comp_ids = [x.get('data-competition_id') for x in country_data.find_all('li')]
-                self.logger.info("{} competition ids retrieved for country #{}".format(len(comp_ids), country_id))
-                for comp_id in comp_ids:
-                    comp_data = self.crawl_comp_data(comp_id)
-                    new_teams = self.extract_teams(comp_data)
-                    teams.extend(new_teams)
-                    self.logger.info("{} teams retrieved for comp #{}".format(len(new_teams), comp_id))
-            else:
-                self.logger.debug("Direct teams found for country #{}".format(country_id))
-                new_teams = self.extract_teams(country_data)                
-                teams.extend(new_teams)
-                self.logger.info("{} teams retrieved for country #{}".format(len(new_teams), country_id))
-            
-            for team in teams:
-                self.store_team(team)
-
     def crawl_team_matches(self, team_id, home=True):
         filter_param = "home"
         
@@ -473,81 +339,87 @@ class Crawler():
         return result
 
     def analyse_match(self, match_data):
-        match_html = self.parse_html(match_data["match_url"])
-        home_id = self.team_id_from_url(match_data["home_url"])
-        visit_id = self.team_id_from_url(match_data["visit_url"])
+        self.logger.info("Initializing analysis of match {}".format(match_data["match_url"]))
 
-        analysis_result = dict(
-            home_pos = -1,
-            visit_pos = -1,
-            delta_pos = -1,
-            
-            home_goals_home = 0,
-            home_taken_home = 0,
-            home_matches_home = 0,
-            home_wins_home = 0,
-            
-            home_goals_visit = 0,
-            home_taken_visit = 0,
-            home_matches_visit = 0,
-            home_wins_visit = 0,
-            
-            visit_goals_home = 0,
-            visit_taken_home = 0,
-            visit_matches_home = 0,
-            visit_wins_home = 0,
-            
-            visit_goals_visit = 0,
-            visit_taken_visit = 0,
-            visit_matches_visit = 0,
-            visit_wins_visit = 0
-        )
+        try:
+            match_html = self.parse_html(match_data["match_url"])
+            home_id = self.team_id_from_url(match_data["home_url"])
+            visit_id = self.team_id_from_url(match_data["visit_url"])
 
-        team_ranks = match_html.find_all("tr", attrs={'class':'highlight'})
-
-        if len(team_ranks) == 2:
-            for team_rank in team_ranks:
-                href = team_rank.find("a").get("href")
-                rank = int(team_rank.find("td", attrs={'class':'rank'}).string)
+            analysis_result = dict(
+                home_pos = -1,
+                visit_pos = -1,
+                delta_pos = -1,
                 
-                if href in match_data["home_url"]:
-                    analysis_result["home_pos"] = rank
+                home_goals_home = 0,
+                home_taken_home = 0,
+                home_matches_home = 0,
+                home_wins_home = 0,
+                
+                home_goals_visit = 0,
+                home_taken_visit = 0,
+                home_matches_visit = 0,
+                home_wins_visit = 0,
+                
+                visit_goals_home = 0,
+                visit_taken_home = 0,
+                visit_matches_home = 0,
+                visit_wins_home = 0,
+                
+                visit_goals_visit = 0,
+                visit_taken_visit = 0,
+                visit_matches_visit = 0,
+                visit_wins_visit = 0
+            )
 
-                if href in match_data["visit_url"]:
-                    analysis_result["visit_pos"] = rank
+            team_ranks = match_html.find_all("tr", attrs={'class':'highlight'})
+
+            if len(team_ranks) == 2:
+                for team_rank in team_ranks:
+                    href = team_rank.find("a").get("href")
+                    rank = int(team_rank.find("td", attrs={'class':'rank'}).string)
+                    
+                    if href in match_data["home_url"]:
+                        analysis_result["home_pos"] = rank
+
+                    if href in match_data["visit_url"]:
+                        analysis_result["visit_pos"] = rank
+                
+                analysis_result["delta_pos"] = abs(analysis_result["home_pos"] - analysis_result["visit_pos"])
             
-            analysis_result["delta_pos"] = abs(analysis_result["home_pos"] - analysis_result["visit_pos"])
-        
-        home_matches_home = self.crawl_team_matches(home_id).find_all("a", attrs={'class': re.compile(r"result-(win|loss|draw)")})
-        home_matches_away = self.crawl_team_matches(home_id, False).find_all("a", attrs={'class': re.compile(r"result-(win|loss|draw)")})
-        visit_matches_home = self.crawl_team_matches(visit_id).find_all("a", attrs={'class': re.compile(r"result-(win|loss|draw)")})
-        visit_matches_away = self.crawl_team_matches(visit_id, False).find_all("a", attrs={'class': re.compile(r"result-(win|loss|draw)")})
+            home_matches_home = self.crawl_team_matches(home_id).find_all("a", attrs={'class': re.compile(r"result-(win|loss|draw)")})
+            home_matches_away = self.crawl_team_matches(home_id, False).find_all("a", attrs={'class': re.compile(r"result-(win|loss|draw)")})
+            visit_matches_home = self.crawl_team_matches(visit_id).find_all("a", attrs={'class': re.compile(r"result-(win|loss|draw)")})
+            visit_matches_away = self.crawl_team_matches(visit_id, False).find_all("a", attrs={'class': re.compile(r"result-(win|loss|draw)")})
 
-        result = self.sum_matches_data(home_matches_home)
-        analysis_result["home_goals_home"] = result["goals"]
-        analysis_result["home_taken_home"] = result["taken"]
-        analysis_result["home_matches_home"] = result["matches"]
-        analysis_result["home_wins_home"] = result["wins"]
+            result = self.sum_matches_data(home_matches_home)
+            analysis_result["home_goals_home"] = result["goals"]
+            analysis_result["home_taken_home"] = result["taken"]
+            analysis_result["home_matches_home"] = result["matches"]
+            analysis_result["home_wins_home"] = result["wins"]
 
-        result = self.sum_matches_data(home_matches_away, away=True)
-        analysis_result["home_goals_visit"] = result["goals"]
-        analysis_result["home_taken_visit"] = result["taken"]
-        analysis_result["home_matches_visit"] = result["matches"]
-        analysis_result["home_wins_visit"] = result["wins"]
+            result = self.sum_matches_data(home_matches_away, away=True)
+            analysis_result["home_goals_visit"] = result["goals"]
+            analysis_result["home_taken_visit"] = result["taken"]
+            analysis_result["home_matches_visit"] = result["matches"]
+            analysis_result["home_wins_visit"] = result["wins"]
 
-        result = self.sum_matches_data(visit_matches_home)
-        analysis_result["visit_goals_home"] = result["goals"]
-        analysis_result["visit_taken_home"] = result["taken"]
-        analysis_result["visit_matches_home"] = result["matches"]
-        analysis_result["visit_wins_home"] = result["wins"]
+            result = self.sum_matches_data(visit_matches_home)
+            analysis_result["visit_goals_home"] = result["goals"]
+            analysis_result["visit_taken_home"] = result["taken"]
+            analysis_result["visit_matches_home"] = result["matches"]
+            analysis_result["visit_wins_home"] = result["wins"]
 
-        result = self.sum_matches_data(visit_matches_away, away=True)
-        analysis_result["visit_goals_visit"] = result["goals"]
-        analysis_result["visit_taken_visit"] = result["taken"]
-        analysis_result["visit_matches_visit"] = result["matches"]
-        analysis_result["visit_wins_visit"] = result["wins"]
+            result = self.sum_matches_data(visit_matches_away, away=True)
+            analysis_result["visit_goals_visit"] = result["goals"]
+            analysis_result["visit_taken_visit"] = result["taken"]
+            analysis_result["visit_matches_visit"] = result["matches"]
+            analysis_result["visit_wins_visit"] = result["wins"]
 
-        match_data["analysis_result"] = analysis_result
+            match_data["analysis_result"] = analysis_result
+        except Exception as e:
+            self.logger.error("Couldn't analyse match {}. Error: {}".format(match_data["match_url"], e.message))
+            print e.message
 
         return match_data
 
@@ -563,11 +435,14 @@ class Crawler():
 
         result = []
 
+        bet_counter = 0
+
         for bet in data:
             if "basquete" not in bet["camp_nome"].lower():
                 # Just process teams if the bet rate is interesting
                 bet_delta_rate = abs(bet["taxa_c"] - bet["taxa_f"])
                 if bet_delta_rate > self.bet_rate_threshold:
+                    bet_counter += 1
                     self.logger.info(u"Interesting bet rate for '{}' x '{}': {} x {} - delta: {} (thr: {})".format(bet["casa_time"], bet["visit_time"], bet["taxa_c"], bet["taxa_f"], bet_delta_rate, self.bet_rate_threshold))
                     bet_dt = datetime.strptime(bet["dt_hr_ini"], '%Y-%m-%dT%H:%M:00')
                     bet_date = bet_dt.strftime(self.date_storage_format)
@@ -614,8 +489,9 @@ class Crawler():
                             scores[index[0]] = (scores[index[0]][0] + score_v[0], score_v[1])
                         else:
                             scores.append(score_v)
-
+                    
                     likely_matches = [(close_matches[x[1]], x[0] / 2) for x in sorted(scores, reverse=True)][:5]
+                    self.logger.info("{} likely matches found for bet at date {}. Creating data object".format(len(likely_matches), bet_dt))
                     matches_data = []
 
                     for likely_match in likely_matches:
@@ -640,23 +516,26 @@ class Crawler():
                         visit_rate = bet["taxa_f"],
                         delta_rate = bet_delta_rate,
                         timestamp = "{} {}".format(bet_dt.strftime(self.date_storage_format), bet_dt.strftime(self.time_storage_format)),
-                        matches = matches_data
+                        matches = matches_data,
+                        id = bet_counter
                     )
 
                     result.append(sub_result)
                     
         self.logger.info(u"Team name decoding result:\n{}".format(t))
 
+        self.logger.info("Successfully crawled bets. Dumping result to file {}".format(self.bets_file_name))
+        
+        with open(self.bets_file_name, "wb") as f:
+            pickle.dump(result, f)
+
         return result
 
 if __name__ == '__main__':
     crawler = Crawler()
-    
-    a = crawler.crawl_bets()
-    
-    with open("output.txt", "w") as f:
-        pprint(a, f)
-    
+    crawler.crawl_matches()
+    crawler.crawl_bets()
+        
 # Testes:
 # distancia na tabela
 # ultimos 5 jogos (considerando casa/campeonato)

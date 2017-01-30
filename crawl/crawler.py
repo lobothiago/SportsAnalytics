@@ -448,7 +448,6 @@ class Crawler():
                 # Just process teams if the bet rate is interesting
                 bet_delta_rate = abs(bet["taxa_c"] - bet["taxa_f"])
                 if bet_delta_rate > self.bet_rate_threshold:
-                    bet_counter += 1
                     self.logger.info(u"Interesting bet rate for '{}' x '{}': {} x {} - delta: {} (thr: {})".format(bet["casa_time"], bet["visit_time"], bet["taxa_c"], bet["taxa_f"], bet_delta_rate, self.bet_rate_threshold))
                     bet_dt = datetime.strptime(bet["dt_hr_ini"], '%Y-%m-%dT%H:%M:00')
                     bet_date = bet_dt.strftime(self.date_storage_format)
@@ -480,6 +479,8 @@ class Crawler():
                     if not len(close_matches) > 0:
                         self.logger.info("No matches within tolerance for bet at date {}".format(bet_dt))
                         continue
+                    
+                    bet_counter += 1
 
                     close_matches_team_h = [x[1].lower() for x in close_matches]
                     close_matches_team_v = [x[2].lower() for x in close_matches]

@@ -65,9 +65,9 @@ def build_digest_message():
 	msg += u"Encontrei as seguintes {} apostas desde minha última atualização:\n\n".format(len(bets_data))
 	
 	for bet in bets_data:
-		msg += u"{}: {} ({}) x {} ({}) - delta: {}\n".format(bet["id"], bet["home_name"], bet["home_rate"], bet["visit_name"], bet["visit_rate"], bet["delta_rate"])
+		msg += u"{}:\n{} ({})\n{} ({})\nDelta: {}\n{}\n\n".format(bet["id"], bet["home_name"], bet["home_rate"], bet["visit_name"], bet["visit_rate"], bet["delta_rate"], bet["timestamp"])
 	
-	msg += u"\n Envie '/expand número_da_aposta' para saber mais sobre uma das apostas.\n"
+	msg += u"Envie '/expand número_da_aposta' para saber mais sobre uma das apostas.\n"
 
 	return msg
 

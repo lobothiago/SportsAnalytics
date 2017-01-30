@@ -283,12 +283,6 @@ def bot_init():
 	dispatcher = updater.dispatcher
 	job_q = updater.job_queue
 	
-	logger.info("Crawling matches for bot startup...")
-	crawler.crawl_matches()
-
-	logger.info("Crawling bets for bot startup...")
-	bets_data = crawler.crawl_bets()
-
 	# with open("bets.txt", "rb") as f:
 	# 	bets_data = pickle.load(f)
 
@@ -311,37 +305,39 @@ def bot_init():
 
 	# Add new Job to the dispatcher's job queue.
 	# Will happen every 24 hours seconds, starting from deltaseconds
-	job_q.put(Job(callback_digest, (24 * 60 * 60)), next_t=deltaseconds)
+	job_q.put(Job(callback_digest, (6 * 60 * 60)), next_t=deltaseconds)
 	
 	# #########
-	target = current_day + timedelta(hours=int(match_crawl_hour))
-	logger.debug("Base match crawl target: {}".format(target))
+	# target = current_day + timedelta(hours=int(match_crawl_hour))
+	# logger.debug("Base match crawl target: {}".format(target))
 	
-	if target < datetime.today():
-		target = target + timedelta(days=1)
-		logger.debug("Target too early. Postpone one day: {}".format(target))
+	# if target < datetime.today():
+	# 	target = target + timedelta(days=1)
+	# 	logger.debug("Target too early. Postpone one day: {}".format(target))
 	
-	deltaseconds = (target - datetime.today()).total_seconds()
-	logger.info("Next match crawl: {} - deltaseconds: {}".format(target, deltaseconds))
+	# deltaseconds = (target - datetime.today()).total_seconds()
+	# logger.info("Next match crawl: {} - deltaseconds: {}".format(target, deltaseconds))
 
 	# Add new Job to the dispatcher's job queue.
 	# Will happen every 24 hours seconds, starting from deltaseconds
-	job_q.put(Job(callback_crawl_matches, (24 * 60 * 60)), next_t=deltaseconds)
+	logger.info("Crawling matches for bot startup...")
+	job_q.put(Job(callback_crawl_matches, (3 * 60 * 60)), next_t=0)
 	
 	# #########
-	target = current_day + timedelta(hours=int(bets_crawl_hour))
-	logger.debug("Base bets crawl target: {}".format(target))
+	# target = current_day + timedelta(hours=int(bets_crawl_hour))
+	# logger.debug("Base bets crawl target: {}".format(target))
 	
-	if target < datetime.today():
-		target = target + timedelta(days=1)
-		logger.debug("Target too early. Postpone one day: {}".format(target))
+	# if target < datetime.today():
+	# 	target = target + timedelta(days=1)
+	# 	logger.debug("Target too early. Postpone one day: {}".format(target))
 	
-	deltaseconds = (target - datetime.today()).total_seconds()
-	logger.info("Next bets crawl: {} - deltaseconds: {}".format(target, deltaseconds))
+	# deltaseconds = (target - datetime.today()).total_seconds()
+	# logger.info("Next bets crawl: {} - deltaseconds: {}".format(target, deltaseconds))
 
 	# Add new Job to the dispatcher's job queue.
 	# Will happen every 24 hours seconds, starting from deltaseconds
-	job_q.put(Job(callback_crawl_bets, (24 * 60 * 60)), next_t=deltaseconds)
+	logger.info("Crawling bets for bot startup...")
+	job_q.put(Job(callback_crawl_bets, (3 * 60 * 60)), next_t=0)
 
 	start_handler = CommandHandler('start', start)
 	dispatcher.add_handler(start_handler)

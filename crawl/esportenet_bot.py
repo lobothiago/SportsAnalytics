@@ -67,7 +67,7 @@ def build_digest_message():
 	for bet in bets_data:
 		msg += u"{}: {} ({}) x {} ({}) - delta: {}\n".format(bet["id"], bet["home_name"], bet["home_rate"], bet["visit_name"], bet["visit_rate"], bet["delta_rate"])
 	
-	msg += u"\n Envie '/expand <id>' para saber mais sobre uma das apostas.\n"
+	msg += u"\n Envie '/expand número_da_aposta' para saber mais sobre uma das apostas.\n"
 
 	return msg
 

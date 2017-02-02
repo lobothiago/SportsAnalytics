@@ -310,6 +310,30 @@ class Crawler():
             search_dt = today_dt + timedelta(days=i)
             self.crawl_matches_by_day(search_dt)
 
+    # def crawl_team_matches(self, team_id, home=True):
+    #     filter_param = "home"
+        
+    #     if not home:
+    #         filter_param = "away"
+
+    #     payload = dict(
+    #         block_id=urllib.quote('page_match_1_block_match_team_matches_14'),
+    #         callback_params=urllib.quote("""{{"page":"0", "bookmaker_urls":{{"13":[{{"link":"http://www.bet365.com/home/?affiliate=365_371546","name":"Bet 365"}}]}},
+    #                                           "block_service_id":"match_summary_block_matchteammatches",
+    #                                           "team_id":{},
+    #                                           "competition_id":"0",
+    #                                           "filter":"home"}}""".format(team_id)),
+    #         action=urllib.quote('filterMatches'),
+    #         params=urllib.quote('{{"filter":"{}"}}'.format(filter_param))
+    #     )
+
+    #     request_url = self.data_url + '/a/block_match_team_matches?block_id={block_id}&callback_params={callback_params}&action={action}&params={params}'.format(**payload)
+
+    #     data = self.parse_json(request_url)
+    #     html = BeautifulSoup(data['commands'][0]['parameters']['content'].rstrip('\n'), 'html.parser')
+
+    #     return html
+
     def crawl_team_matches(self, team_id, home=True):
         filter_param = "home"
         
@@ -317,9 +341,9 @@ class Crawler():
             filter_param = "away"
 
         payload = dict(
-            block_id=urllib.quote('page_match_1_block_match_team_matches_14'),
+            block_id=urllib.quote('page_team_1_block_team_matches_5'),
             callback_params=urllib.quote("""{{"page":"0", "bookmaker_urls":{{"13":[{{"link":"http://www.bet365.com/home/?affiliate=365_371546","name":"Bet 365"}}]}},
-                                              "block_service_id":"match_summary_block_matchteammatches",
+                                              "block_service_id":"team_matches_block_teammatches",
                                               "team_id":{},
                                               "competition_id":"0",
                                               "filter":"home"}}""".format(team_id)),
@@ -327,7 +351,7 @@ class Crawler():
             params=urllib.quote('{{"filter":"{}"}}'.format(filter_param))
         )
 
-        request_url = self.data_url + '/a/block_match_team_matches?block_id={block_id}&callback_params={callback_params}&action={action}&params={params}'.format(**payload)
+        request_url = self.data_url + '/a/block_team_matches?block_id={block_id}&callback_params={callback_params}&action={action}&params={params}'.format(**payload)
 
         data = self.parse_json(request_url)
         html = BeautifulSoup(data['commands'][0]['parameters']['content'].rstrip('\n'), 'html.parser')
@@ -381,51 +405,50 @@ class Crawler():
         home_url = match[3]
         visit_url = match[4]
 
+        match_html = self.parse_html(match[0])
+        home_id = self.team_id_from_url(match[3])
+        visit_id = self.team_id_from_url(match[4])
+
+        analysis_result = dict(
+            home_pos = -1,
+            visit_pos = -1,
+            delta_pos = -1,
+            two_tables = 0,
+            
+            home_goals_home = 0,
+            home_taken_home = 0,
+            home_matches_home = 0,
+            home_wins_home = 0,
+            
+            home_goals_visit = 0,
+            home_taken_visit = 0,
+            home_matches_visit = 0,
+            home_wins_visit = 0,
+            
+            visit_goals_home = 0,
+            visit_taken_home = 0,
+            visit_matches_home = 0,
+            visit_wins_home = 0,
+            
+            visit_goals_visit = 0,
+            visit_taken_visit = 0,
+            visit_matches_visit = 0,
+            visit_wins_visit = 0
+        )
+
         try:
-            match_html = self.parse_html(match[0])
-            home_id = self.team_id_from_url(match[3])
-            visit_id = self.team_id_from_url(match[4])
-
-            analysis_result = dict(
-                home_pos = -1,
-                visit_pos = -1,
-                delta_pos = -1,
-                two_tables = 0,
-                
-                home_goals_home = 0,
-                home_taken_home = 0,
-                home_matches_home = 0,
-                home_wins_home = 0,
-                
-                home_goals_visit = 0,
-                home_taken_visit = 0,
-                home_matches_visit = 0,
-                home_wins_visit = 0,
-                
-                visit_goals_home = 0,
-                visit_taken_home = 0,
-                visit_matches_home = 0,
-                visit_wins_home = 0,
-                
-                visit_goals_visit = 0,
-                visit_taken_visit = 0,
-                visit_matches_visit = 0,
-                visit_wins_visit = 0
-            )
-
             team_ranks = match_html.find_all("tr", attrs={'class':'highlight'})
 
+            # Ranking stuff
             if len(team_ranks) == 2:
-                team_ranks = match_html.find_all("table", attrs={'class':'leaguetable'})
-                print len(team_ranks)
-                print match_url
-                print "\n"
-                # Podem existir duas tabelas no mesmo camp
-                # ver:
-                # http://br.soccerway.com/matches/2017/02/02/spain/copa-del-rey/real-club-celta-de-vigo/deportivo-alaves/2403689/
-                # http://br.soccerway.com/matches/2017/02/02/mexico/copa-mexico/club-necaxa/ua-estado-de-mexico/2388644/
-                # http://br.soccerway.com/matches/2017/02/05/italy/serie-a/juventus-fc/fc-internazionale-milano/2305975/
+                tables = match_html.find_all("table", attrs={'class':'leaguetable'})
 
+                if len(tables) == 2:
+                    table_urls = match_html.find_all("div", attrs={'class':'block_team_table-wrapper'})
+                    table_urls = [x.h2.a.get("href") for x in table_urls]
+                    if table_urls[0] != table_urls[1]:
+                        analysis_result["two_tables"] = 1
+                
                 for team_rank in team_ranks:
                     href = team_rank.find("a").get("href")
                     rank = int(team_rank.find("td", attrs={'class':'rank'}).string)
@@ -438,6 +461,7 @@ class Crawler():
                 
                 analysis_result["delta_pos"] = abs(analysis_result["home_pos"] - analysis_result["visit_pos"])
             
+            # Recent matches stuff
             home_matches_home = self.crawl_team_matches(home_id).find_all("a", attrs={'class': re.compile(r"result-(win|loss|draw)")})
             home_matches_away = self.crawl_team_matches(home_id, False).find_all("a", attrs={'class': re.compile(r"result-(win|loss|draw)")})
             visit_matches_home = self.crawl_team_matches(visit_id).find_all("a", attrs={'class': re.compile(r"result-(win|loss|draw)")})

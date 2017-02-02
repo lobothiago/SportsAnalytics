@@ -76,7 +76,7 @@ def build_bet_expand_message(bet_id):
 
 	bet = [x for x in bets_data if x["id"] == bet_id][0]
 
-	msg = u"{}:\n*{} x {}*\n{} x {} - delta = {}\n\n".format(bet["id"], bet["home_name"], bet["visit_name"], bet["home_rate"], bet["visit_rate"], bet["delta_rate"])
+	msg = u"{}:\n*{} x {}*\n{} x {} - delta = {}\n{}\n\n".format(bet["id"], bet["home_name"], bet["visit_name"], bet["home_rate"], bet["visit_rate"], bet["delta_rate"], bet["timestamp"])
 
 	matched_match = bet["matches"][0]
 	analysis_result = matched_match["analysis_result"]
@@ -169,12 +169,16 @@ def show(bot, update):
 	chat_id = str(update.message.chat_id)
 	
 	if db.row_exists(subscribers_table_name, u"id={}".format(chat_id)):	
-		msg = build_digest_message()
+		try:
+			msg = build_digest_message()
 
-		logger.debug(u"Sending show message to id: {}".format(chat_id))
+			logger.debug(u"Sending show message to id: {}".format(chat_id))
 
-		bot.send_message(chat_id=update.message.chat_id,
-						 text=msg)
+			bot.send_message(chat_id=update.message.chat_id,
+							 text=msg)
+		except Exception as e:
+			bot.send_message(chat_id=update.message.chat_id,
+							 text=e.message)
 	else:
 		bot.send_message(chat_id=update.message.chat_id,
 						 text="Esse recurso só é disponível para assinantes.\n")
@@ -283,8 +287,8 @@ def bot_init():
 	dispatcher = updater.dispatcher
 	job_q = updater.job_queue
 	
-	# with open("bets.txt", "rb") as f:
-	# 	bets_data = pickle.load(f)
+	with open("bets.txt", "rb") as f:
+		bets_data = pickle.load(f)
 
 	# Determine remaining seconds until next digest message (1 per day)
 	current_day = datetime(year=datetime.today().year,
@@ -321,7 +325,7 @@ def bot_init():
 	# Add new Job to the dispatcher's job queue.
 	# Will happen every 24 hours seconds, starting from deltaseconds
 	logger.info("Crawling matches for bot startup...")
-	job_q.put(Job(callback_crawl_matches, (3 * 60 * 60)), next_t=0)
+	# job_q.put(Job(callback_crawl_matches, (3 * 60 * 60)), next_t=0)
 	
 	# #########
 	# target = current_day + timedelta(hours=int(bets_crawl_hour))
@@ -337,7 +341,7 @@ def bot_init():
 	# Add new Job to the dispatcher's job queue.
 	# Will happen every 24 hours seconds, starting from deltaseconds
 	logger.info("Crawling bets for bot startup...")
-	job_q.put(Job(callback_crawl_bets, (3 * 60 * 60)), next_t=0)
+	# job_q.put(Job(callback_crawl_bets, (3 * 60 * 60)), next_t=0)
 
 	start_handler = CommandHandler('start', start)
 	dispatcher.add_handler(start_handler)

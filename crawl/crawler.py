@@ -34,15 +34,69 @@ class Crawler():
     delta_hours = int(config.get(crawler_section, "delta_hours"))
     old_match_tolerance = int(config.get(crawler_section, "old_match_tolerance"))
     bets_file_name = config.get(crawler_section, "bets_file_name")
+    discard_matches_days = float(config.get(crawler_section, "discard_matches_days"))
 
     db_name = config.get(db_section, "db_name")
     teams_table_name = config.get(db_section, "teams_table_name")
+    matches_table_name = config.get(db_section, "matches_table_name")
     date_storage_format = config.get(db_section, "date_storage_format")
     time_storage_format = config.get(db_section, "time_storage_format")
+    analyses_table_name = config.get(db_section, "analyses_table_name")
+    bets_table_name = config.get(db_section, "bets_table_name")
     
-    # def __init__(self):
-        # self.build_team_database()
-        # self
+    def __init__(self):
+        db = SQLDb(self.db_name)
+        
+        self.logger.info(u"Initializing crawler")
+
+        if not db.table_exists(self.matches_table_name):
+            self.logger.info(u"Table '{}' does not exist. Creating it now".format(self.matches_table_name))
+            db.execute(u"""
+                CREATE TABLE '{}'
+                (
+                    match_url varchar(256) PRIMARY KEY,
+                    a_name varchar(64),
+                    b_name varchar(64),
+                    a_url varchar(256),
+                    b_url varchar(256),
+                    hour varchar(32),
+                    day varchar(16)
+                );
+            """.format(self.matches_table_name))
+
+        if not db.table_exists(self.bets_table_name):
+            self.logger.info(u"Table '{}' does not exist. Creating it now".format(self.bets_table_name))
+            db.execute(u"""
+                CREATE TABLE '{}'
+                (
+                    id INTEGER PRIMARY KEY,
+                    home_name varchar(64),
+                    home_rate REAL,
+                    visit_name varchar(64),
+                    visit_rate REAL,
+                    delta_rate REAL,
+                    draw_rate REAL,
+                    hour varchar(32),
+                    day varchar(16),
+                    match_url varchar(256),
+                    fit_score REAL
+                );
+            """.format(self.bets_table_name))
+
+        # if not db.table_exists(self.analyses_table_name):
+        #     self.logger.info(u"Table '{}' does not exist. Creating it now".format(self.analyses_table_name))
+        #     db.execute(u"""
+        #         CREATE TABLE '{}'
+        #         (
+        #             match_url varchar(256) PRIMARY KEY,
+        #             a_name varchar(64),
+        #             b_name varchar(64),
+        #             a_url varchar(256),
+        #             b_url varchar(256),
+        #             hour varchar(32),
+        #             day varchar(16)
+        #         );
+        #     """.format(self.analyses_table_name))
 
     # HELPER METHODS
 
@@ -122,30 +176,24 @@ class Crawler():
 
     # SOCCERWAY CRAWLER METHODS
     def store_match(self, match, dt):
-        # date = match.find('td', attrs={'class':'date'}).string.strip()
-        # dt = datetime.strptime(date, '%d/%m/%y')
         date = dt.strftime(self.date_storage_format)
 
-        today_dt = datetime(year=datetime.now().year, month=datetime.now().month, day=datetime.now().day)
-
         time = match.find('td', attrs={'class':'status'}).a.span.string.replace(" ", "").strip()
-        dt_time = datetime.strptime(time, self.time_storage_format)
-        dt_time = dt_time + timedelta(days=1)
-        dt_time = dt_time - timedelta(hours=self.delta_hours)
-        time = dt_time.strftime(self.time_storage_format)
+        
+        match_dt = datetime.strptime("{} {}".format(date, time), "{} {}".format(self.date_storage_format, self.time_storage_format))
+        match_dt = match_dt - timedelta(hours = self.delta_hours)
 
+        date = match_dt.strftime(self.date_storage_format)
+        time = match_dt.strftime(self.time_storage_format)
+        
         try:
             match_url = self.data_url + match.find('td', attrs={'class':'info-button'}).a.get("href")
         except Exception as e:
             self.logger.error("Couldn't retrieve match_url: {}".format(e.message))
             return
 
-        if dt < today_dt:
+        if match_dt < datetime.now():
             self.logger.debug("Match {} in past. Skipping it".format(match_url))
-            return
-
-        if (dt - today_dt).total_seconds() > (self.match_day_window * 24 * 60 * 60):
-            self.logger.debug("Match {} outside of time window. Skipping it".format(match_url))
             return
 
         h_url = self.data_url + match.find('td', attrs={'class':'team-a'}).a.get('href')
@@ -163,18 +211,20 @@ class Crawler():
             v_name, v_age = self.team_name_from_url(v_url)
             self.logger.debug(u"New v_name '{}'".format(v_name))
 
-        if v_age != h_age:
-            self.logger.warning(u"h_age ({}) != v_age ({}) for match: {}".format(h_age, v_age, match_url))
-
         db = SQLDb(self.db_name)
 
-        if not db.row_exists(date, "match_url='{}'".format(match_url)):
-            db.execute(u""" 
-                INSERT INTO '{}' (match_url, a_name, b_name, a_url, b_url, hour)
-                VALUES ('{}', '{}', '{}', '{}', '{}', '{}');
-            """.format(date, match_url, h_name, v_name, h_url, v_url, time))
+        if db.row_exists(self.matches_table_name, u"match_url = '{}'".format(match_url)):
+            db.execute(u"""
+                DELETE FROM '{}'
+                WHERE match_url = '{}';
+            """.format(self.matches_table_name, match_url))
 
-            self.logger.debug(u"New match stored at {} {}: {}".format(date, time, match_url))
+        db.execute(u"""
+            INSERT INTO '{}' (match_url, a_name, b_name, a_url, b_url, hour, day)
+            VALUES ('{}', '{}', '{}', '{}', '{}', '{}', '{}');
+        """.format(self.matches_table_name, match_url, h_name, v_name, h_url, v_url, time, date))
+
+        self.logger.debug(u"New match stored at {} {}: {}".format(date, time, match_url))
 
     def crawl_match_data(self, stage_value, competition_id, dt):
         payload = dict(
@@ -196,23 +246,7 @@ class Crawler():
 
     def crawl_matches_by_day(self, dt):
         date_url = dt.strftime("%Y/%m/%d")
-        date_db = dt.strftime(self.date_storage_format)
-
-        db = SQLDb(self.db_name)
-        
-        if not db.table_exists(date_db):
-            self.logger.info(u"Table for day {} does not exist. Creating now".format(date_db))
-            db.execute(u"""
-                CREATE TABLE '{}'
-                (
-                    match_url varchar(256) PRIMARY KEY,
-                    a_name varchar(64),
-                    b_name varchar(64),
-                    a_url varchar(256),
-                    b_url varchar(256),
-                    hour varchar(32)
-                );
-            """.format(date_db))
+        # date_db = dt.strftime(self.date_storage_format)
 
         url = self.data_url + "/matches/{}/".format(dt.strftime("%Y/%m/%d"))
         self.logger.info("URL for day {} is: {}".format(date_url, url))
@@ -240,46 +274,35 @@ class Crawler():
             
             self.logger.debug("{} matches retrieved".format(len(matches)))
             
-            for match in matches:                
+            for match in matches:
                 # If future match -> class status
                 # else -> class score
                 future_match = match.find_all("td", attrs={'class':'status'})
 
-                # If contains span, not cancelled or postponed. Contains time instead
+                # If contains span, not cancelled or postponed and contains time instead
                 if len(future_match) > 0 and future_match[0].a.span:
                     self.store_match(match, dt)
 
-    def clear_old_match_tables(self):
-        self.logger.info(u"Cleaning old match tables")
-        today_dt = datetime(year=datetime.now().year, month=datetime.now().month, day=datetime.now().day)
-        
+    def clear_old_matches(self):
+        self.logger.info(u"Cleaning old matches stored in table '{}'".format(self.matches_table_name))
+
         db = SQLDb(self.db_name)
 
-        table_names = [x[0] for x in db.execute_group("SELECT name FROM sqlite_master")]
+        stored_matches = db.execute_group(u"SELECT match_url, day, hour FROM {}".format(self.matches_table_name))
 
-        t = PrettyTable(["Table Name"])
+        now_dt = datetime.now()
 
-        for table_name in table_names:
-            t.add_row([table_name])
-
-        self.logger.info("Found the following tables in db:\n{}".format(t))
-
-        for table_name in table_names:
-            if 'sqlite' in table_name:
-                continue
-            
-            try:
-                table_dt = datetime.strptime(table_name, self.date_storage_format)
-            except Exception as e:
-                self.logger.info("Skipping non-dateful table: {}".format(e.message))
-                continue
-
-            if table_dt < today_dt:
-                self.logger.info("Table '{}' in past. Dropping it".format(table_name))
-                db.execute("DROP TABLE '{}'".format(table_name))
+        for stored_match in stored_matches:
+            dt = datetime.strptime(u"{} {}".format(stored_match[1], stored_match[2]), u"{} {}".format(self.date_storage_format, self.time_storage_format))
+            if dt < now_dt and (now_dt - dt).total_seconds() > self.discard_matches_days * 24 * 60 * 60:
+                self.logger.info(u"Match '{}' in past. Discarding it".format(stored_match[0]))
+                db.execute(u"""
+                    DELETE FROM '{}'
+                    WHERE match_url = '{}';
+                """.format(self.matches_table_name, stored_match[0]))
                 
     def crawl_matches(self):
-        self.clear_old_match_tables()
+        self.clear_old_matches()
         today_dt = datetime(year=datetime.now().year, month=datetime.now().month, day=datetime.now().day)
         self.logger.info(u"Starting match crawling procedure. today_dt = {}".format(today_dt))
 
@@ -344,18 +367,30 @@ class Crawler():
 
         return result
 
-    def analyse_match(self, match_data):
-        self.logger.info("Initializing analysis of match {}".format(match_data["match_url"]))
+    def analyse_match(self, match_url):
+        self.logger.info("Initializing analysis of match {}".format(match_url))
+
+        db = SQLDb(self.db_name)
+
+        match = db.execute(u"""
+                            SELECT * FROM '{}'
+                            WHERE match_url = '{}'
+                           """.format(self.matches_table_name,
+                                      match_url))
+        
+        home_url = match[3]
+        visit_url = match[4]
 
         try:
-            match_html = self.parse_html(match_data["match_url"])
-            home_id = self.team_id_from_url(match_data["home_url"])
-            visit_id = self.team_id_from_url(match_data["visit_url"])
+            match_html = self.parse_html(match[0])
+            home_id = self.team_id_from_url(match[3])
+            visit_id = self.team_id_from_url(match[4])
 
             analysis_result = dict(
                 home_pos = -1,
                 visit_pos = -1,
                 delta_pos = -1,
+                two_tables = 0,
                 
                 home_goals_home = 0,
                 home_taken_home = 0,
@@ -381,14 +416,24 @@ class Crawler():
             team_ranks = match_html.find_all("tr", attrs={'class':'highlight'})
 
             if len(team_ranks) == 2:
+                team_ranks = match_html.find_all("table", attrs={'class':'leaguetable'})
+                print len(team_ranks)
+                print match_url
+                print "\n"
+                # Podem existir duas tabelas no mesmo camp
+                # ver:
+                # http://br.soccerway.com/matches/2017/02/02/spain/copa-del-rey/real-club-celta-de-vigo/deportivo-alaves/2403689/
+                # http://br.soccerway.com/matches/2017/02/02/mexico/copa-mexico/club-necaxa/ua-estado-de-mexico/2388644/
+                # http://br.soccerway.com/matches/2017/02/05/italy/serie-a/juventus-fc/fc-internazionale-milano/2305975/
+
                 for team_rank in team_ranks:
                     href = team_rank.find("a").get("href")
                     rank = int(team_rank.find("td", attrs={'class':'rank'}).string)
                     
-                    if href in match_data["home_url"]:
+                    if href in home_url:
                         analysis_result["home_pos"] = rank
 
-                    if href in match_data["visit_url"]:
+                    if href in visit_url:
                         analysis_result["visit_pos"] = rank
                 
                 analysis_result["delta_pos"] = abs(analysis_result["home_pos"] - analysis_result["visit_pos"])
@@ -422,12 +467,12 @@ class Crawler():
             analysis_result["visit_matches_visit"] = result["matches"]
             analysis_result["visit_wins_visit"] = result["wins"]
 
-            match_data["analysis_result"] = analysis_result
+            # match_data["analysis_result"] = analysis_result
         except Exception as e:
-            self.logger.error("Couldn't analyse match {}. Error: {}".format(match_data["match_url"], e.message))
+            # self.logger.error("Couldn't analyse match {}. Error: {}".format(match_data["match_url"], e.message))
             print e.message
 
-        return match_data
+        # return match_data
 
     # ESPORTENET CRAWLER METHODS
     def crawl_bets(self):
@@ -436,111 +481,105 @@ class Crawler():
         db = SQLDb(self.db_name)
 
         data = self.parse_json(self.bets_api_url + urllib.quote(self.bets_params.format(datetime.now().year, datetime.now().month, datetime.now().day)))
-        
-        t = PrettyTable(['Full Name == Name', 'Full Name', 'Name', 'Age Group'])
-
-        result = []
-
-        bet_counter = 0
 
         for bet in data:
-            if "basquete" not in bet["camp_nome"].lower():
-                # Just process teams if the bet rate is interesting
+            if "basquete" not in bet["camp_nome"].lower():                
+                bet_dt = datetime.strptime(bet["dt_hr_ini"], '%Y-%m-%dT%H:%M:00')
+
+                bet_hour = bet_dt.strftime(self.time_storage_format)
+
+                if bet_hour == "23:59":
+                    bet_dt = bet_dt + timedelta(minutes=1)
+                
+                date_matches = db.execute_group(u"""SELECT * FROM '{}'
+                                                    WHERE day = '{}'
+                                                """.format(self.matches_table_name,
+                                                           bet_dt.strftime(self.date_storage_format)))
+
+                if not len(date_matches) > 0:
+                    self.logger.debug(u"No matches found for bet at dt: '{}'. Skipping it".format(bet_dt.strftime("{} {}".format(self.date_storage_format, self.time_storage_format))))
+                    continue
+
+                match_dts = [datetime.strptime("{} {}".format(x[6], x[5]), "{} {}".format(self.date_storage_format, self.time_storage_format)) for x in date_matches]
+
+                close_matches = []
+
+                for index, match_dt in enumerate(match_dts):
+                    if abs((bet_dt - match_dt).total_seconds()) <= self.match_hour_threshold * 60 * 60:
+                        close_matches.append(date_matches[index])                    
+
+                if not len(close_matches) > 0:
+                    self.logger.debug(u"No matches within time tolerance for bet at date {}".format(bet_dt))
+                    continue
+                
+                bet_id = bet["camp_jog_id"]
+
                 bet_delta_rate = abs(bet["taxa_c"] - bet["taxa_f"])
-                if bet_delta_rate > self.bet_rate_threshold:
-                    self.logger.info(u"Interesting bet rate for '{}' x '{}': {} x {} - delta: {} (thr: {})".format(bet["casa_time"], bet["visit_time"], bet["taxa_c"], bet["taxa_f"], bet_delta_rate, self.bet_rate_threshold))
-                    bet_dt = datetime.strptime(bet["dt_hr_ini"], '%Y-%m-%dT%H:%M:00')
-                    bet_date = bet_dt.strftime(self.date_storage_format)
 
-                    if not db.table_exists(bet_date):
-                        self.logger.info("No matches for date {} in database. Skipping".format(bet_dt))
-                        continue
+                team_h, age_h = self.filter_team_name(bet["casa_time"])
+                team_v, age_v = self.filter_team_name(bet["visit_time"])
 
-                    bet_comparison_dt = datetime.strptime(bet_dt.strftime(self.time_storage_format), self.time_storage_format)
+                close_matches_team_h = [x[1].lower() for x in close_matches]
+                close_matches_team_v = [x[2].lower() for x in close_matches]
+                scores_h = list_similarity(team_h.lower(), close_matches_team_h, 10)
+                scores_v = list_similarity(team_v.lower(), close_matches_team_v, 10)
 
-                    team_h, age_h = self.filter_team_name(bet["casa_time"])
-                    team_v, age_v = self.filter_team_name(bet["visit_time"])
-                    
-                    t.add_row([bet["casa_time"] == team_h, u"'{}'".format(bet["casa_time"]), u"'{}'".format(team_h), age_h])
-                    t.add_row([bet["visit_time"] == team_v, u"'{}'".format(bet["visit_time"]), u"'{}'".format(team_v), age_v])
+                # This line and the next for loop are supposed to merge scores_h and scores_v
+                scores = scores_h
 
-                    if age_h != age_v:
-                        self.logger.warning(u"Different age groups retrieved for '{}' vs '{}': {} and {}".format(bet["casa_time"], bet["visit_time"], age_h, age_v))
+                for score_v in scores_v:
+                    index = [i for i, x in enumerate(scores) if x[1] == score_v[1]]
+                    if len(index) > 0:
+                        scores[index[0]] = (scores[index[0]][0] + score_v[0], score_v[1])
+                    else:
+                        scores.append(score_v)
+                
+                # Most likely match is the one with maximum score
+                likely_match = [(close_matches[x[1]], x[0] / 2) for x in sorted(scores, reverse=True)][0]
 
-                    date_matches = db.execute_group(u"""SELECT * FROM '{}'""".format(bet_date))
-                    match_dts = [datetime.strptime(x[5], self.time_storage_format) for x in date_matches]
+                # Store bet in database (and update if repeated)
+                if db.row_exists(self.bets_table_name, u"id = '{}'".format(bet_id)):
+                    db.execute(u"""
+                        DELETE FROM '{}'
+                        WHERE id = {};
+                    """.format(self.bets_table_name, bet_id))
+                
+                db.execute(u"""
+                    INSERT INTO '{}' (id,
+                                      home_name, 
+                                      home_rate, 
+                                      visit_name, 
+                                      visit_rate, 
+                                      delta_rate, 
+                                      draw_rate, 
+                                      hour,
+                                      day,
+                                      match_url,
+                                      fit_score)
+                    VALUES ({}, '{}', {}, '{}', {}, {}, {}, '{}', '{}', '{}', {});
+                """.format(self.bets_table_name, 
+                           bet_id, 
+                           bet["casa_time"], 
+                           bet["taxa_c"], 
+                           bet["visit_time"], 
+                           bet["taxa_f"], 
+                           bet_delta_rate, 
+                           bet["taxa_e"],
+                           "{}".format(bet_dt.strftime(self.time_storage_format)),
+                           "{}".format(bet_dt.strftime(self.date_storage_format)),
+                           likely_match[0][0],
+                           likely_match[1]))
 
-                    close_matches = []
+                self.analyse_match(likely_match[0][0])
 
-                    for index, match_dt in enumerate(match_dts):
-                        if abs((bet_comparison_dt - match_dt).total_seconds()) <= self.match_hour_threshold * 60 * 60:
-                            close_matches.append(date_matches[index])                    
-
-                    if not len(close_matches) > 0:
-                        self.logger.info("No matches within tolerance for bet at date {}".format(bet_dt))
-                        continue
-                    
-                    bet_counter += 1
-
-                    close_matches_team_h = [x[1].lower() for x in close_matches]
-                    close_matches_team_v = [x[2].lower() for x in close_matches]
-                    scores_h = list_similarity(team_h.lower(), close_matches_team_h, 10)
-                    scores_v = list_similarity(team_v.lower(), close_matches_team_v, 10)
-
-                    # This line and the next for loop are supposed to merge scores_h and scores_v
-                    scores = scores_h
-
-                    for score_v in scores_v:
-                        index = [i for i, x in enumerate(scores) if x[1] == score_v[1]]
-                        if len(index) > 0:
-                            scores[index[0]] = (scores[index[0]][0] + score_v[0], score_v[1])
-                        else:
-                            scores.append(score_v)
-                    
-                    likely_matches = [(close_matches[x[1]], x[0] / 2) for x in sorted(scores, reverse=True)][:5]
-                    self.logger.info("{} likely matches found for bet at date {}. Creating data object".format(len(likely_matches), bet_dt))
-                    matches_data = []
-
-                    for likely_match in likely_matches:
-                        data = likely_match[0]
-                        score = likely_match[1]
-
-                        match_data = dict(
-                            match_url = data[0],
-                            home_url = data[3],
-                            visit_url = data[4],
-                            match_score = score                        
-                        )
-
-                        match_data = self.analyse_match(match_data)
-                        
-                        matches_data.append(match_data)
-
-                    sub_result = dict(
-                        home_name = bet["casa_time"],
-                        home_rate = bet["taxa_c"],
-                        visit_name = bet["visit_time"],
-                        visit_rate = bet["taxa_f"],
-                        delta_rate = bet_delta_rate,
-                        timestamp = "{} {}".format(bet_dt.strftime(self.date_storage_format), bet_dt.strftime(self.time_storage_format)),
-                        matches = matches_data,
-                        id = bet_counter
-                    )
-
-                    result.append(sub_result)
-                    
-        self.logger.info(u"Team name decoding result:\n{}".format(t))
-
-        self.logger.info("Successfully crawled bets. Dumping result to file {}".format(self.bets_file_name))
+        # self.logger.info("Successfully crawled bets. Dumping result to file {}".format(self.bets_file_name))
         
-        with open(self.bets_file_name, "wb") as f:
-            pickle.dump(result, f)
-
-        return result
+        # with open(self.bets_file_name, "wb") as f:
+            # pickle.dump(result, f)
 
 if __name__ == '__main__':
     crawler = Crawler()
-    crawler.crawl_matches()
+    # crawler.crawl_matches()
     crawler.crawl_bets()
         
 # Testes:

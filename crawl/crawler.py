@@ -83,20 +83,47 @@ class Crawler():
                 );
             """.format(self.bets_table_name))
 
-        # if not db.table_exists(self.analyses_table_name):
-        #     self.logger.info(u"Table '{}' does not exist. Creating it now".format(self.analyses_table_name))
-        #     db.execute(u"""
-        #         CREATE TABLE '{}'
-        #         (
-        #             match_url varchar(256) PRIMARY KEY,
-        #             a_name varchar(64),
-        #             b_name varchar(64),
-        #             a_url varchar(256),
-        #             b_url varchar(256),
-        #             hour varchar(32),
-        #             day varchar(16)
-        #         );
-        #     """.format(self.analyses_table_name))
+        if not db.table_exists(self.analyses_table_name):
+            self.logger.info(u"Table '{}' does not exist. Creating it now".format(self.analyses_table_name))
+            db.execute(u"""
+                CREATE TABLE '{}'
+                (
+                    match_url varchar(256) PRIMARY KEY,
+                    
+                    h_pos INTEGER,
+                    v_pos INTEGER,
+                    d_pos INTEGER,
+                    two_tables INTEGER,
+
+                    hgh INTEGER,
+                    hth INTEGER,
+                    hmh INTEGER,
+                    hwh INTEGER,
+                    hlh INTEGER,
+                    hdh INTEGER,
+
+                    hgv INTEGER,
+                    htv INTEGER,
+                    hmv INTEGER,
+                    hwv INTEGER,
+                    hlv INTEGER,
+                    hdv INTEGER,
+
+                    vgh INTEGER,
+                    vth INTEGER,
+                    vmh INTEGER,
+                    vwh INTEGER,
+                    vlh INTEGER,
+                    vdh INTEGER,
+
+                    vgv INTEGER,
+                    vtv INTEGER,
+                    vmv INTEGER,
+                    vwv INTEGER,
+                    vlv INTEGER,
+                    vdv INTEGER
+                );
+            """.format(self.analyses_table_name))
 
     # HELPER METHODS
 
@@ -283,19 +310,54 @@ class Crawler():
                 if len(future_match) > 0 and future_match[0].a.span:
                     self.store_match(match, dt)
 
+    def clear_old_bets(self):
+        self.logger.info(u"Cleaning old bets stored in table '{}'".format(self.bets_table_name))
+
+        db = SQLDb(self.db_name)
+
+        stored_bets = db.execute_group(u"SELECT id, match_url, day, hour FROM '{}'".format(self.bets_table_name))
+
+        now_dt = datetime.now()
+
+        for stored_bet in stored_bets:
+            dt = datetime.strptime(u"{} {}".format(stored_bet[2], stored_bet[3]), u"{} {}".format(self.date_storage_format, self.time_storage_format))
+            if dt < now_dt and (now_dt - dt).total_seconds() > self.discard_matches_days * 24 * 60 * 60:
+                self.logger.info(u"Bet '{}' in past. Discarding it".format(stored_bet[0]))
+                
+                self.logger.info(u"Discarding corresponding match")
+                db.execute(u"""
+                    DELETE FROM '{}'
+                    WHERE match_url = '{}';
+                """.format(self.matches_table_name, stored_bet[1]))
+                
+                self.logger.info(u"Discarding corresponding analysis")
+                db.execute(u"""
+                    DELETE FROM '{}'
+                    WHERE match_url = '{}';
+                """.format(self.analyses_table_name, stored_bet[1]))
+                
+                db.execute(u"""
+                    DELETE FROM '{}'
+                    WHERE id = {};
+                """.format(self.bets_table_name, stored_bet[0]))
+
     def clear_old_matches(self):
         self.logger.info(u"Cleaning old matches stored in table '{}'".format(self.matches_table_name))
 
         db = SQLDb(self.db_name)
 
-        stored_matches = db.execute_group(u"SELECT match_url, day, hour FROM {}".format(self.matches_table_name))
+        stored_matches = db.execute_group(u"SELECT match_url, day, hour FROM '{}'".format(self.matches_table_name))
+        stored_bets_urls = db.execute_group(u"SELECT match_url FROM '{}'".format(self.bets_table_name))
+        unreferenced_matches = [x for x in stored_matches if x[0] not in stored_bets_urls]
+
+        self.logger.info(u"Found {} matches and {} bets yielding {} unreferenced matches".format(len(stored_matches), len(stored_bets_urls), len(unreferenced_matches)))
 
         now_dt = datetime.now()
 
-        for stored_match in stored_matches:
+        for stored_match in unreferenced_matches:
             dt = datetime.strptime(u"{} {}".format(stored_match[1], stored_match[2]), u"{} {}".format(self.date_storage_format, self.time_storage_format))
             if dt < now_dt and (now_dt - dt).total_seconds() > self.discard_matches_days * 24 * 60 * 60:
-                self.logger.info(u"Match '{}' in past. Discarding it".format(stored_match[0]))
+                self.logger.info(u"Match '{}' in past and unreferenced. Discarding it".format(stored_match[0]))
                 db.execute(u"""
                     DELETE FROM '{}'
                     WHERE match_url = '{}';
@@ -309,30 +371,6 @@ class Crawler():
         for i in range(self.match_day_window):
             search_dt = today_dt + timedelta(days=i)
             self.crawl_matches_by_day(search_dt)
-
-    # def crawl_team_matches(self, team_id, home=True):
-    #     filter_param = "home"
-        
-    #     if not home:
-    #         filter_param = "away"
-
-    #     payload = dict(
-    #         block_id=urllib.quote('page_match_1_block_match_team_matches_14'),
-    #         callback_params=urllib.quote("""{{"page":"0", "bookmaker_urls":{{"13":[{{"link":"http://www.bet365.com/home/?affiliate=365_371546","name":"Bet 365"}}]}},
-    #                                           "block_service_id":"match_summary_block_matchteammatches",
-    #                                           "team_id":{},
-    #                                           "competition_id":"0",
-    #                                           "filter":"home"}}""".format(team_id)),
-    #         action=urllib.quote('filterMatches'),
-    #         params=urllib.quote('{{"filter":"{}"}}'.format(filter_param))
-    #     )
-
-    #     request_url = self.data_url + '/a/block_match_team_matches?block_id={block_id}&callback_params={callback_params}&action={action}&params={params}'.format(**payload)
-
-    #     data = self.parse_json(request_url)
-    #     html = BeautifulSoup(data['commands'][0]['parameters']['content'].rstrip('\n'), 'html.parser')
-
-    #     return html
 
     def crawl_team_matches(self, team_id, home=True):
         filter_param = "home"
@@ -358,17 +396,20 @@ class Crawler():
 
         return html
 
-    def sum_matches_data(self, matches_data, tops=5, away=False):
+    def crunch_matches_data(self, matches_data, away=False):
         result = dict(
             goals = 0,
             taken = 0,
             matches = 0,
-            wins = 0
+            wins = 0,
+            loses = 0,
+            draws = 0
         )
 
-        for match_data in matches_data[max(len(matches_data) - tops, 0):]:
+        for match_data in matches_data:
             match_dt = datetime.strptime(match_data.parent.parent.find("td", attrs={'class':'full-date'}).string, '%d/%m/%y')
             
+            # Three months, for now
             if (datetime.now() - match_dt).total_seconds() > self.old_match_tolerance:
                 continue
 
@@ -376,6 +417,10 @@ class Crawler():
 
             if "win" in match_data.get("class")[0]:
                 result["wins"] += 1
+            elif "draw" in match_data.get("class")[0]:
+                result["draws"] += 1
+            else:
+                result["loses"] += 1
 
             if match_data.span:
                 goals = match_data.span.next_sibling.replace("-", "").split()                
@@ -419,21 +464,29 @@ class Crawler():
             home_taken_home = 0,
             home_matches_home = 0,
             home_wins_home = 0,
+            home_loses_home = 0,
+            home_draws_home = 0,
             
             home_goals_visit = 0,
             home_taken_visit = 0,
             home_matches_visit = 0,
             home_wins_visit = 0,
+            home_loses_visit = 0,
+            home_draws_visit = 0,
             
             visit_goals_home = 0,
             visit_taken_home = 0,
             visit_matches_home = 0,
             visit_wins_home = 0,
+            visit_loses_home = 0,
+            visit_draws_home = 0,
             
             visit_goals_visit = 0,
             visit_taken_visit = 0,
             visit_matches_visit = 0,
-            visit_wins_visit = 0
+            visit_wins_visit = 0,
+            visit_loses_visit = 0,
+            visit_draws_visit = 0
         )
 
         try:
@@ -466,45 +519,74 @@ class Crawler():
             home_matches_away = self.crawl_team_matches(home_id, False).find_all("a", attrs={'class': re.compile(r"result-(win|loss|draw)")})
             visit_matches_home = self.crawl_team_matches(visit_id).find_all("a", attrs={'class': re.compile(r"result-(win|loss|draw)")})
             visit_matches_away = self.crawl_team_matches(visit_id, False).find_all("a", attrs={'class': re.compile(r"result-(win|loss|draw)")})
-
-            result = self.sum_matches_data(home_matches_home)
+            
+            result = self.crunch_matches_data(home_matches_home)
             analysis_result["home_goals_home"] = result["goals"]
             analysis_result["home_taken_home"] = result["taken"]
             analysis_result["home_matches_home"] = result["matches"]
             analysis_result["home_wins_home"] = result["wins"]
+            analysis_result["home_loses_home"] = result["loses"]
+            analysis_result["home_draws_home"] = result["draws"]
 
-            result = self.sum_matches_data(home_matches_away, away=True)
+            result = self.crunch_matches_data(home_matches_away, away=True)
             analysis_result["home_goals_visit"] = result["goals"]
             analysis_result["home_taken_visit"] = result["taken"]
             analysis_result["home_matches_visit"] = result["matches"]
             analysis_result["home_wins_visit"] = result["wins"]
+            analysis_result["home_loses_visit"] = result["loses"]
+            analysis_result["home_draws_visit"] = result["draws"]
 
-            result = self.sum_matches_data(visit_matches_home)
+            result = self.crunch_matches_data(visit_matches_home)
             analysis_result["visit_goals_home"] = result["goals"]
             analysis_result["visit_taken_home"] = result["taken"]
             analysis_result["visit_matches_home"] = result["matches"]
             analysis_result["visit_wins_home"] = result["wins"]
+            analysis_result["visit_loses_home"] = result["loses"]
+            analysis_result["visit_draws_home"] = result["draws"]
 
-            result = self.sum_matches_data(visit_matches_away, away=True)
+            result = self.crunch_matches_data(visit_matches_away, away=True)
             analysis_result["visit_goals_visit"] = result["goals"]
             analysis_result["visit_taken_visit"] = result["taken"]
             analysis_result["visit_matches_visit"] = result["matches"]
             analysis_result["visit_wins_visit"] = result["wins"]
+            analysis_result["visit_loses_visit"] = result["loses"]
+            analysis_result["visit_draws_visit"] = result["draws"]
+            
+            self.logger.info("Analysis finished. Storing it".format(match_url))
 
-            # match_data["analysis_result"] = analysis_result
+            if db.row_exists(self.analyses_table_name, u"match_url = '{}'".format(match_url)):
+                db.execute(u"""
+                    DELETE FROM '{}'
+                    WHERE match_url = '{}';
+                """.format(self.analyses_table_name, match_url))
+
+            db.execute(u"""
+                INSERT INTO '{}' (match_url,                    
+                                  h_pos, v_pos, d_pos, two_tables,
+                                  hgh, hth, hmh, hwh, hlh, hdh,
+                                  hgv, htv, hmv, hwv, hlv, hdv,
+                                  vgh, vth, vmh, vwh, vlh, vdh,
+                                  vgv, vtv, vmv, vwv, vlv, vdv)
+                VALUES ('{}', {home_pos}, {visit_pos}, {delta_pos}, {two_tables},
+                              {home_goals_home}, {home_taken_home}, {home_matches_home}, {home_wins_home}, {home_loses_home}, {home_draws_home},
+                              {home_goals_visit}, {home_taken_visit}, {home_matches_visit}, {home_wins_visit}, {home_loses_visit}, {home_draws_visit},            
+                              {visit_goals_home}, {visit_taken_home}, {visit_matches_home}, {visit_wins_home}, {visit_loses_home}, {visit_draws_home},
+                              {visit_goals_visit}, {visit_taken_visit}, {visit_matches_visit}, {visit_wins_visit}, {visit_loses_visit}, {visit_draws_visit});
+            """.format(self.analyses_table_name, match_url, **analysis_result))
         except Exception as e:
-            # self.logger.error("Couldn't analyse match {}. Error: {}".format(match_data["match_url"], e.message))
-            print e.message
-
-        # return match_data
+            self.logger.error(u"Couldn't analyse match. Error: {}".format(e.message))
 
     # ESPORTENET CRAWLER METHODS
     def crawl_bets(self):
         self.logger.info("Starting bet crawling procedure")
 
+        self.clear_old_bets()
+
         db = SQLDb(self.db_name)
 
         data = self.parse_json(self.bets_api_url + urllib.quote(self.bets_params.format(datetime.now().year, datetime.now().month, datetime.now().day)))
+
+        self.logger.info("Found {} bets. Analysing them now".format(len(data)))
 
         for bet in data:
             if "basquete" not in bet["camp_nome"].lower():                
@@ -562,6 +644,8 @@ class Crawler():
                 likely_match = [(close_matches[x[1]], x[0] / 2) for x in sorted(scores, reverse=True)][0]
 
                 # Store bet in database (and update if repeated)
+                self.logger.info(u"Storing bet #{}".format(bet_id))
+                
                 if db.row_exists(self.bets_table_name, u"id = '{}'".format(bet_id)):
                     db.execute(u"""
                         DELETE FROM '{}'
@@ -596,15 +680,10 @@ class Crawler():
 
                 self.analyse_match(likely_match[0][0])
 
-        # self.logger.info("Successfully crawled bets. Dumping result to file {}".format(self.bets_file_name))
-        
-        # with open(self.bets_file_name, "wb") as f:
-            # pickle.dump(result, f)
-
 if __name__ == '__main__':
     crawler = Crawler()
     # crawler.crawl_matches()
-    crawler.crawl_bets()
+    # crawler.crawl_bets()
         
 # Testes:
 # distancia na tabela

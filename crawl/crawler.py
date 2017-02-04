@@ -12,7 +12,6 @@ import re
 from string_similarity import list_similarity
 from prettytable import PrettyTable
 from pprint import pprint
-import pickle
 
 class Crawler():
     
@@ -27,7 +26,6 @@ class Crawler():
     bets_params = config.get(crawler_section, "bets_params")
     data_url = config.get(crawler_section, "data_url")
     team_list_url = config.get(crawler_section, "team_list_url")
-    bet_rate_threshold = float(config.get(crawler_section, "bet_rate_threshold"))
     bet_search_depth = int(config.get(crawler_section, "bet_search_depth"))
     match_day_window = int(config.get(crawler_section, "match_day_window"))
     match_hour_threshold = float(config.get(crawler_section, "match_hour_threshold"))
@@ -682,6 +680,17 @@ class Crawler():
 
 if __name__ == '__main__':
     crawler = Crawler()
+
+    db = SQLDb(crawler.db_name)
+
+    matches = db.execute_group("SELECT day FROM '{}'".format(crawler.matches_table_name))
+    distinct = set(matches)
+    pprint(distinct)
+
+    matches = db.execute_group("SELECT day FROM '{}' WHERE day = '17/02/05'".format(crawler.bets_table_name))
+    print len(matches)
+    distinct = set(matches)
+    pprint(distinct)
     # crawler.crawl_matches()
     # crawler.crawl_bets()
         

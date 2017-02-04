@@ -7,12 +7,11 @@ from my_logger import MyLogger
 from my_config_reader import MyConfigReader
 from my_db import SQLDb
 from crawler import Crawler
-import pickle
 
-telegram_section = "telegram"
+db_section = "db"
 logging_section = "logging"
 crawler_section = "crawler"
-db_section = "db"
+telegram_section = "telegram"
 
 config = MyConfigReader()
 logger = MyLogger("esportenet_bot.py")
@@ -22,14 +21,20 @@ subscription_password = config.get(telegram_section, "subscription_password")
 digest_schedule_hour = config.get(telegram_section, "digest_schedule_hour")
 match_crawl_hour = config.get(telegram_section, "match_crawl_hour")
 bets_crawl_hour = config.get(telegram_section, "bets_crawl_hour")
+default_threshold = float(config.get(telegram_section, "default_threshold"))
 
 db_name = config.get(db_section, "db_name")
 subscribers_table_name = config.get(db_section, "subscribers_table_name")
+teams_table_name = config.get(db_section, "teams_table_name")
+bets_table_name = config.get(db_section, "bets_table_name")
+matches_table_name = config.get(db_section, "matches_table_name")
+analyses_table_name = config.get(db_section, "analyses_table_name")
+date_storage_format = config.get(db_section, "date_storage_format")
+time_storage_format = config.get(db_section, "time_storage_format")
 
-bet_rate_threshold = float(config.get(crawler_section, "bet_rate_threshold"))
+match_day_window = int(config.get(crawler_section, "match_day_window"))
 
 crawler = Crawler()
-bets_data = None
 
 # Helper ---------------------------------
 
@@ -58,22 +63,37 @@ def add_subscription(sub_id, sub_name):
 
 	return u"Assinatura adicionada com sucesso.\n"
 
-def build_digest_message():
-	global bets_data
+def build_digest_message(days_to_show=match_day_window, delta_threshold=default_threshold):
+	db = SQLDb(db_name)
 
-	msg = u"A diferença de taxas mínima atual é: {}\n\n".format(bet_rate_threshold)
-	msg += u"Encontrei as seguintes {} apostas desde minha última atualização:\n\n".format(len(bets_data))
+	valid_dates = []
+	dt = datetime.now()
 	
-	for bet in bets_data:
-		msg += u"{}:\n{} ({})\n{} ({})\nDelta: {}\n{}\n\n".format(bet["id"], bet["home_name"], bet["home_rate"], bet["visit_name"], bet["visit_rate"], bet["delta_rate"], bet["timestamp"])
-	
-	msg += u"Envie '/expand número_da_aposta' para saber mais sobre uma das apostas.\n"
+	for i in range(days_to_show):
+		dt_new = dt + timedelta(days=i)
+		valid_dates.append(dt_new.strftime(date_storage_format))
 
-	return msg
+	all_bets = db.execute_group(u"""SELECT id, home_name, home_rate, 
+												visit_name, visit_rate,
+												delta_rate, draw_rate,
+												hour, day, match_url,
+												fit_score FROM '{}'""".format(bets_table_name))
+	
+	valid_bets = [x for x in all_bets if x[8] in valid_dates and x[5] > delta_threshold]
+
+	return [len(valid_bets)]
+
+	# msg = u"A diferença de taxas mínima atual é: {}\n\n".format(bet_rate_threshold)
+	# msg += u"Encontrei as seguintes {} apostas desde minha última atualização:\n\n".format(len(bets_data))
+	
+	# for bet in bets_data:
+	# 	msg += u"{}:\n{} ({})\n{} ({})\nDelta: {}\n{}\n\n".format(bet["id"], bet["home_name"], bet["home_rate"], bet["visit_name"], bet["visit_rate"], bet["delta_rate"], bet["timestamp"])
+	
+	# msg += u"Envie '/expand número_da_aposta' para saber mais sobre uma das apostas.\n"
+
+	# return msg
 
 def build_bet_expand_message(bet_id):
-	global bets_data
-
 	bet = [x for x in bets_data if x["id"] == bet_id][0]
 
 	msg = u"{}:\n*{} x {}*\n{} x {} - delta = {}\n{}\n\n".format(bet["id"], bet["home_name"], bet["visit_name"], bet["home_rate"], bet["visit_rate"], bet["delta_rate"], bet["timestamp"])
@@ -153,35 +173,68 @@ def callback_crawl_matches(bot, job):
 		logger.error("Couldn't crawl matches. Error: {}".format(e.message))
 
 def callback_crawl_bets(bot, job):
-	global bets_data
 	logger.info("Attempting to crawl bets data")
 
 	try:
-		bets_data = crawler.crawl_bets()
+		crawler.crawl_bets()
 	except Exception as e:
 		logger.error("Couldn't crawl bets. Error: {}".format(e.message))
 
 # Commands ---------------------------------
 
-def show(bot, update):
+def show(bot, update, args):
 	db = SQLDb(db_name)
 
 	chat_id = str(update.message.chat_id)
 	
 	if db.row_exists(subscribers_table_name, u"id={}".format(chat_id)):	
+		days_to_show = match_day_window
+		delta_threshold = default_threshold
+
+		if len(args) != 0:
+			if len(args) == 2 or len(args) == 4:
+				i = 0
+				while i < len(args):
+					if args[i] == "t":						
+						i += 1
+						try:
+							delta_threshold = max(float(args[i]), 0)
+						except Exception:
+							bot.send_message(chat_id=update.message.chat_id,
+								 		 	 text=u"Não foi possível encontrar um número após 't'")
+							return	
+					elif args[i] == "d":
+						i += 1
+						try:
+							days_to_show = max(min(int(args[i]), match_day_window), 1)
+						except Exception:
+							bot.send_message(chat_id=update.message.chat_id,
+								 		 	 text=u"Não foi possível encontrar um número após 'd'")
+							return	
+					else:
+						bot.send_message(chat_id=update.message.chat_id,
+								 		 text=u"Argumentos inválidos.")
+						return
+					i += 1
+			else:
+				bot.send_message(chat_id=update.message.chat_id,
+								 text=u"Número de argumentos inválido.")
+				return
+
 		try:
-			msg = build_digest_message()
+			messages = build_digest_message(days_to_show, delta_threshold)
 
 			logger.debug(u"Sending show message to id: {}".format(chat_id))
 
-			bot.send_message(chat_id=update.message.chat_id,
-							 text=msg)
+			for msg in messages:
+				bot.send_message(chat_id=update.message.chat_id,
+								 text=msg)
 		except Exception as e:
 			bot.send_message(chat_id=update.message.chat_id,
-							 text=e.message)
+							 text=u"Erro: {}".format(e.message))
 	else:
 		bot.send_message(chat_id=update.message.chat_id,
-						 text="Esse recurso só é disponível para assinantes.\n")
+						 text=u"Esse recurso só é disponível para assinantes.\n")
 
 def subscribe(bot, update, args):
 	sub_id = str(update.message.chat_id)
@@ -210,7 +263,6 @@ def subscribe(bot, update, args):
 		logger.info("Subscription attempt failed")
 	
 def expand_bet(bot, update, args):
-	global bets_data
 	db = SQLDb(db_name)
 
 	chat_id = str(update.message.chat_id)
@@ -239,7 +291,7 @@ def expand_bet(bot, update, args):
 		                 parse_mode=ParseMode.MARKDOWN)
 	else:
 		bot.send_message(chat_id=update.message.chat_id,
-						 text="Esse recurso só é disponível para assinantes.\n")
+						 text=u"Esse recurso só é disponível para assinantes.\n")
 	
 def start(bot, update):
 	me = bot.get_me()
@@ -255,7 +307,6 @@ def start(bot, update):
 	                 text=msg)
 
 def test(bot, update):
-	global bets_data
 	db = SQLDb(db_name)
 
 	chat_ids = [row[0] for row in db.execute_group("SELECT id FROM {};".format(subscribers_table_name))]
@@ -279,7 +330,6 @@ def unknown(bot, update):
 # Inits ---------------------------------
 
 def bot_init():
-	global bets_data
 	logger.info("Initializing Telegram Bot")
 	# Connecting to Telegram API
 	# Updater retrieves information and dispatcher connects commands 
@@ -287,9 +337,6 @@ def bot_init():
 	dispatcher = updater.dispatcher
 	job_q = updater.job_queue
 	
-	with open("bets.txt", "rb") as f:
-		bets_data = pickle.load(f)
-
 	# Determine remaining seconds until next digest message (1 per day)
 	current_day = datetime(year=datetime.today().year,
 					 	   month=datetime.today().month,
@@ -308,40 +355,14 @@ def bot_init():
 	logger.info("Next digest: {} - deltaseconds: {}".format(target, deltaseconds))
 
 	# Add new Job to the dispatcher's job queue.
-	# Will happen every 24 hours seconds, starting from deltaseconds
-	job_q.put(Job(callback_digest, (6 * 60 * 60)), next_t=deltaseconds)
+	# Will happen every 12 hours seconds, starting from deltaseconds
+	job_q.put(Job(callback_digest, (12 * 60 * 60)), next_t=deltaseconds)
 	
-	# #########
-	# target = current_day + timedelta(hours=int(match_crawl_hour))
-	# logger.debug("Base match crawl target: {}".format(target))
-	
-	# if target < datetime.today():
-	# 	target = target + timedelta(days=1)
-	# 	logger.debug("Target too early. Postpone one day: {}".format(target))
-	
-	# deltaseconds = (target - datetime.today()).total_seconds()
-	# logger.info("Next match crawl: {} - deltaseconds: {}".format(target, deltaseconds))
-
-	# Add new Job to the dispatcher's job queue.
-	# Will happen every 24 hours seconds, starting from deltaseconds
 	logger.info("Crawling matches for bot startup...")
-	# job_q.put(Job(callback_crawl_matches, (3 * 60 * 60)), next_t=0)
+	# job_q.put(Job(callback_crawl_matches, (8 * 60 * 60)), next_t=0)
 	
-	# #########
-	# target = current_day + timedelta(hours=int(bets_crawl_hour))
-	# logger.debug("Base bets crawl target: {}".format(target))
-	
-	# if target < datetime.today():
-	# 	target = target + timedelta(days=1)
-	# 	logger.debug("Target too early. Postpone one day: {}".format(target))
-	
-	# deltaseconds = (target - datetime.today()).total_seconds()
-	# logger.info("Next bets crawl: {} - deltaseconds: {}".format(target, deltaseconds))
-
-	# Add new Job to the dispatcher's job queue.
-	# Will happen every 24 hours seconds, starting from deltaseconds
 	logger.info("Crawling bets for bot startup...")
-	# job_q.put(Job(callback_crawl_bets, (3 * 60 * 60)), next_t=0)
+	# job_q.put(Job(callback_crawl_bets, (4 * 60 * 60)), next_t=0)
 
 	start_handler = CommandHandler('start', start)
 	dispatcher.add_handler(start_handler)
@@ -355,7 +376,7 @@ def bot_init():
 	test_handler = CommandHandler('test', test)
 	dispatcher.add_handler(test_handler)
 
-	show_handler = CommandHandler('show', show)
+	show_handler = CommandHandler('show', show, pass_args=True)
 	dispatcher.add_handler(show_handler)
 
 	unknown_handler = MessageHandler(Filters.command, unknown)
@@ -370,8 +391,8 @@ def db_init():
 
 	db = SQLDb(db_name)
 	
-	logger.info("Creating table: '{}'".format(subscribers_table_name))
 	if not db.table_exists(subscribers_table_name):
+		logger.info(u"Table '{}' does not exist. Creating it now".format(subscribers_table_name))
 		db.execute(""" 
 			CREATE TABLE {} 
 			( 
@@ -379,8 +400,6 @@ def db_init():
 				username VARCHAR(25)
 			);
 		""".format(subscribers_table_name))
-	else:
-		logger.info("Table already existent")
 
 def init():
 	db_init()

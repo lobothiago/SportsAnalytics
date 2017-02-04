@@ -22,6 +22,7 @@ digest_schedule_hour = config.get(telegram_section, "digest_schedule_hour")
 match_crawl_hour = config.get(telegram_section, "match_crawl_hour")
 bets_crawl_hour = config.get(telegram_section, "bets_crawl_hour")
 default_threshold = float(config.get(telegram_section, "default_threshold"))
+list_page_size = int(config.get(telegram_section, "list_page_size"))
 
 db_name = config.get(db_section, "db_name")
 subscribers_table_name = config.get(db_section, "subscribers_table_name")
@@ -66,6 +67,7 @@ def add_subscription(sub_id, sub_name):
 def build_digest_message(days_to_show=match_day_window, delta_threshold=default_threshold):
 	db = SQLDb(db_name)
 
+	msgs = []
 	valid_dates = []
 	dt = datetime.now()
 	
@@ -74,76 +76,111 @@ def build_digest_message(days_to_show=match_day_window, delta_threshold=default_
 		valid_dates.append(dt_new.strftime(date_storage_format))
 
 	all_bets = db.execute_group(u"""SELECT id, home_name, home_rate, 
-												visit_name, visit_rate,
-												delta_rate, draw_rate,
-												hour, day, match_url,
-												fit_score FROM '{}'""".format(bets_table_name))
-	
+											   visit_name, visit_rate,
+											   delta_rate, draw_rate,
+											   hour, day, match_url,
+											   fit_score FROM '{}'""".format(bets_table_name))
+
 	valid_bets = [x for x in all_bets if x[8] in valid_dates and x[5] > delta_threshold]
 
-	return [len(valid_bets)]
+	bet_dates = [[y for y in valid_bets if y[8] == x] for x in valid_dates]
 
-	# msg = u"A diferença de taxas mínima atual é: {}\n\n".format(bet_rate_threshold)
-	# msg += u"Encontrei as seguintes {} apostas desde minha última atualização:\n\n".format(len(bets_data))
-	
-	# for bet in bets_data:
-	# 	msg += u"{}:\n{} ({})\n{} ({})\nDelta: {}\n{}\n\n".format(bet["id"], bet["home_name"], bet["home_rate"], bet["visit_name"], bet["visit_rate"], bet["delta_rate"], bet["timestamp"])
-	
-	# msg += u"Envie '/expand número_da_aposta' para saber mais sobre uma das apostas.\n"
+	msgs.append(u"Mostrando apostas com delta > {} para o(s) próximo(s) {} dia(s).".format(delta_threshold, days_to_show))
 
-	# return msg
+	for index, bet_date in enumerate(bet_dates):
+		msgs.append(u"{} apostas para o dia: '{}'".format(len(bet_date), valid_dates[index]))
+		msg = u""
+
+		sorted_bets = sorted(bet_date, key=lambda x: x[5], reverse=True)
+
+		for counter, bet in enumerate(sorted_bets):
+			msg += u"{} - {}: {} x {}\n".format(bet[0], bet[5], bet[1], bet[3])
+
+			if counter % 10 == 0 and counter != 0:
+				if len(msg) != 0:
+					msgs.append(msg)
+				msg = u""
+
+		if len(msg) != 0:
+			msgs.append(msg)
+	
+	msgs.append(u"Envie '/expand número_da_aposta' para saber mais sobre uma das apostas.\n")
+	return msgs
 
 def build_bet_expand_message(bet_id):
-	bet = [x for x in bets_data if x["id"] == bet_id][0]
+	db = SQLDb(db_name)
 
-	msg = u"{}:\n*{} x {}*\n{} x {} - delta = {}\n{}\n\n".format(bet["id"], bet["home_name"], bet["visit_name"], bet["home_rate"], bet["visit_rate"], bet["delta_rate"], bet["timestamp"])
+	bet = db.execute(u"""
+						SELECT id, home_name, home_rate, 
+							    visit_name, visit_rate,
+							    delta_rate, draw_rate,
+							    hour, day, match_url,
+							    fit_score 
+					 	FROM '{}'
+					    WHERE id={}
+					  """.format(bets_table_name, bet_id))
 
-	matched_match = bet["matches"][0]
-	analysis_result = matched_match["analysis_result"]
+	analysis = db.execute(u"""
+			                SELECT match_url,                    
+			                       h_pos, v_pos, d_pos, two_tables,
+			                       hgh, hth, hmh, hwh, hlh, hdh,
+			                       hgv, htv, hmv, hwv, hlv, hdv,
+			                       vgh, vth, vmh, vwh, vlh, vdh,
+			                       vgv, vtv, vmv, vwv, vlv, vdv
+			                FROM '{}'
+			                WHERE match_url='{}'
+			               """.format(analyses_table_name, bet[9]))
 
-	msg += u"Partida do soccerway.com mais provável ({0:.2f}% de probabilidade):\n{1}\n\n".format(matched_match["match_score"] * 100.0, matched_match["match_url"])
+	msg = u"{}:\n*{} x {}*\nC: {} E: {} V: {}\nDelta: {}\n{} {}\n\n".format(bet[0], bet[1], bet[3], bet[2], bet[6], bet[4], bet[5], bet[8], bet[7])
+
+	msg += u"Partida do soccerway.com mais provável ({0:.2f}% de probabilidade):\n{1}\n\n".format(bet[10] * 100.0, bet[9])
 		
-	if analysis_result["delta_pos"] != -1:
-		msg += u"*Posição na tabela*:\n{}: {}\n{}: {}\nDelta: {}\n\n".format(bet["home_name"], analysis_result["home_pos"], bet["visit_name"], analysis_result["visit_pos"], analysis_result["delta_pos"])
+	if analysis[3] != -1:
+		msg += u"*Posição na tabela:*\n"
+		if analysis[4]:
+			msg += u"Times em capeonatos diferentes!\n"
+		msg += u"{}: {}\n".format(bet[1], analysis[1])
+		msg += u"{}: {}\n".format(bet[3], analysis[2])
+		msg += u"Delta: {}\n\n".format(analysis[3])
 
-	msg += u"*Análise das últimas partidas:*\n"
-	msg += u"*{} - em casa*\n".format(bet["home_name"])
-	msg += u"Gols feitos em casa: {}\n".format(analysis_result["home_goals_home"])
-	msg += u"Gols sofridos em casa: {}\n".format(analysis_result["home_taken_home"])
-	try:
-		ratio = float(analysis_result["home_goals_home"]) / float(analysis_result["home_taken_home"])
-	except Exception:
-		ratio = float('Inf')
-	msg += u"Razão em casa: {0:.2f}\n\n".format(ratio)
-	msg += u"Gols feitos fora: {}\n".format(analysis_result["home_goals_visit"])
-	msg += u"Gols sofridos fora: {}\n".format(analysis_result["home_taken_visit"])
-	try:
-		ratio = float(analysis_result["home_goals_visit"]) / float(analysis_result["home_taken_visit"])
-	except Exception:
-		ratio = float('Inf')
-	msg += u"Razão fora: {0:.2f}\n\n".format(ratio)
+	# msg += u"*Análise das últimas partidas:*\n"
+	# msg += u"*{} - em casa*\n".format(bet["home_name"])
+	# msg += u"Gols feitos em casa: {}\n".format(analysis["home_goals_home"])
+	# msg += u"Gols sofridos em casa: {}\n".format(analysis["home_taken_home"])
+	# try:
+	# 	ratio = float(analysis["home_goals_home"]) / float(analysis["home_taken_home"])
+	# except Exception:
+	# 	ratio = float('Inf')
+	# msg += u"Razão em casa: {0:.2f}\n\n".format(ratio)
+	# msg += u"Gols feitos fora: {}\n".format(analysis["home_goals_visit"])
+	# msg += u"Gols sofridos fora: {}\n".format(analysis["home_taken_visit"])
+	# try:
+	# 	ratio = float(analysis["home_goals_visit"]) / float(analysis["home_taken_visit"])
+	# except Exception:
+	# 	ratio = float('Inf')
+	# msg += u"Razão fora: {0:.2f}\n\n".format(ratio)
 
-	msg += u"Vitórias/derrotas em casa: {}/{}\n".format(analysis_result["home_wins_home"], (analysis_result["home_matches_home"] - analysis_result["home_wins_home"]))
-	msg += u"Vitórias/derrotas fora: {}/{}\n\n".format(analysis_result["home_wins_visit"], (analysis_result["home_matches_visit"] - analysis_result["home_wins_visit"]))
+	# msg += u"Vitórias/derrotas em casa: {}/{}\n".format(analysis["home_wins_home"], (analysis["home_matches_home"] - analysis["home_wins_home"]))
+	# msg += u"Vitórias/derrotas fora: {}/{}\n\n".format(analysis["home_wins_visit"], (analysis["home_matches_visit"] - analysis["home_wins_visit"]))
 
-	msg += u"*{} - fora*\n".format(bet["visit_name"])
-	msg += u"Gols feitos em casa: {}\n".format(analysis_result["visit_goals_home"])
-	msg += u"Gols sofridos em casa: {}\n".format(analysis_result["visit_taken_home"])
-	try:
-		ratio = float(analysis_result["visit_goals_home"]) / float(analysis_result["visit_taken_home"])
-	except Exception:
-		ratio = float('Inf')
-	msg += u"Razão em casa: {0:.2f}\n\n".format(ratio)
-	msg += u"Gols feitos fora: {}\n".format(analysis_result["visit_goals_visit"])
-	msg += u"Gols sofridos fora: {}\n".format(analysis_result["visit_taken_visit"])
-	try:
-		ratio = float(analysis_result["visit_goals_visit"]) / float(analysis_result["visit_taken_visit"])
-	except Exception:
-		ratio = float('Inf')
-	msg += u"Razão fora: {0:.2f}\n\n".format(ratio)
+	# msg += u"*{} - fora*\n".format(bet[3])
+	# msg += u"Gols feitos em casa: {}\n".format(analysis["visit_goals_home"])
+	# msg += u"Gols sofridos em casa: {}\n".format(analysis["visit_taken_home"])
+	# try:
+	# 	ratio = float(analysis["visit_goals_home"]) / float(analysis["visit_taken_home"])
+	# except Exception:
+	# 	ratio = float('Inf')
+	# msg += u"Razão em casa: {0:.2f}\n\n".format(ratio)
+	# msg += u"Gols feitos fora: {}\n".format(analysis["visit_goals_visit"])
+	# msg += u"Gols sofridos fora: {}\n".format(analysis["visit_taken_visit"])
+	# try:
+	# 	ratio = float(analysis["visit_goals_visit"]) / float(analysis["visit_taken_visit"])
+	# except Exception:
+	# 	ratio = float('Inf')
+	# msg += u"Razão fora: {0:.2f}\n\n".format(ratio)
 
-	msg += u"Vitórias/derrotas em casa: {}/{}\n".format(analysis_result["visit_wins_home"], (analysis_result["visit_matches_home"] - analysis_result["visit_wins_home"]))
-	msg += u"Vitórias/derrotas fora: {}/{}\n\n".format(analysis_result["visit_wins_visit"], (analysis_result["visit_matches_visit"] - analysis_result["visit_wins_visit"]))
+	# msg += u"Vitórias/derrotas em casa: {}/{}\n".format(analysis["visit_wins_home"], (analysis["visit_matches_home"] - analysis["visit_wins_home"]))
+	# msg += u"Vitórias/derrotas fora: {}/{}\n\n".format(analysis["visit_wins_visit"], (analysis["visit_matches_visit"] - analysis["visit_wins_visit"]))
 	
 	return msg
 
@@ -156,13 +193,11 @@ def callback_digest(bot, job):
 	
 	chat_ids = [row[0] for row in db.execute_group("SELECT id FROM {};".format(subscribers_table_name))]
 	
-	msg = build_digest_message()
-
 	for chat_id in chat_ids:
 		logger.debug(u"Sending digest message to id: {}".format(chat_id))
 
 		bot.send_message(chat_id=chat_id,
-						 text=msg)
+						 text=u"oi")
 
 def callback_crawl_matches(bot, job):
 	logger.info("Attempting to crawl matches data")
@@ -266,7 +301,7 @@ def expand_bet(bot, update, args):
 	db = SQLDb(db_name)
 
 	chat_id = str(update.message.chat_id)
-	
+
 	if db.row_exists(subscribers_table_name, u"id={}".format(chat_id)):	
 		if len(args) < 1:
 			bot.send_message(chat_id=update.message.chat_id,
@@ -280,12 +315,11 @@ def expand_bet(bot, update, args):
 		                 	 text=u"O id deve ser um valor numérico.")
 			return
 
-		if bet_id < 1 or bet_id > len(bets_data):
-			ids = [x["id"] for x in bets_data]
+		if not db.row_exists(bets_table_name, u"id={}".format(bet_id)):
 			bot.send_message(chat_id=update.message.chat_id,
-		                 	 text=u"O id deve estar entre {} e {}.".format(min(ids), max(ids)))
+		                 	 text=u"id inexistente.")
 			return
-
+			
 		bot.send_message(chat_id=update.message.chat_id,
 		                 text=build_bet_expand_message(bet_id),
 		                 parse_mode=ParseMode.MARKDOWN)

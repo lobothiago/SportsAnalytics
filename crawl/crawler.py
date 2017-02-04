@@ -345,8 +345,10 @@ class Crawler():
         db = SQLDb(self.db_name)
 
         stored_matches = db.execute_group(u"SELECT match_url, day, hour FROM '{}'".format(self.matches_table_name))
+
         stored_bets_urls = db.execute_group(u"SELECT match_url FROM '{}'".format(self.bets_table_name))
-        unreferenced_matches = [x for x in stored_matches if x[0] not in stored_bets_urls]
+
+        unreferenced_matches = [x for x in stored_matches if x[0][0] not in stored_bets_urls]
 
         self.logger.info(u"Found {} matches and {} bets yielding {} unreferenced matches".format(len(stored_matches), len(stored_bets_urls), len(unreferenced_matches)))
 
@@ -681,18 +683,21 @@ class Crawler():
 if __name__ == '__main__':
     crawler = Crawler()
 
-    db = SQLDb(crawler.db_name)
+    # db = SQLDb(crawler.db_name)
 
-    matches = db.execute_group("SELECT day FROM '{}'".format(crawler.matches_table_name))
-    distinct = set(matches)
-    pprint(distinct)
+    # -- match = db.execute("SELECT * FROM '{}' WHERE match_url = 'http://br.soccerway.com/matches/2017/02/04/bolivia/lfpb/club-bolivar/club-petrolero-de-tarija/2401858/'".format(crawler.matches_table_name))
+    # pprint(match)
 
-    matches = db.execute_group("SELECT day FROM '{}' WHERE day = '17/02/05'".format(crawler.bets_table_name))
-    print len(matches)
-    distinct = set(matches)
-    pprint(distinct)
-    # crawler.crawl_matches()
-    # crawler.crawl_bets()
+    # matches = db.execute_group("SELECT day FROM '{}'".format(crawler.matches_table_name))
+    # distinct = set(matches)
+    # pprint(distinct)
+
+    # matches = db.execute_group("SELECT day FROM '{}' WHERE day = '17/02/05'".format(crawler.bets_table_name))
+    # print len(matches)
+    # distinct = set(matches)
+    # pprint(distinct)
+    crawler.crawl_matches()
+    crawler.crawl_bets()
         
 # Testes:
 # distancia na tabela

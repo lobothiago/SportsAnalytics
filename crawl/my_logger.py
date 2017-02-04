@@ -18,7 +18,7 @@ class SingleLevelFilter(logging.Filter):
 class MyLogger():
 
     def __init__(self, 
-                 name, 
+                 name,
                  log_path = "./logs", 
                  general_format = "[%(levelname)s] [%(name)s] [%(asctime)s]: %(message)s", 
                  specific_format = "[%(name)s] [%(asctime)s]: %(message)s"):

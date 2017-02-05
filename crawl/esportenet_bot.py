@@ -346,7 +346,7 @@ def start(bot, update):
 	msg += u"O que você quer fazer?\n\n"
 	msg += u"/start - Exibe essa mensagem\n"
 	msg += u"/subscribe <senha> - Inscreve você na lista de receptores de apostas\n"
-	msg += u"/show - Mostra as apostas analisadas\n\n"
+	msg += u"/show d numero_de_dias t taxa_minima - Mostra as apostas analisadas\n\n"
 	
 	bot.send_message(chat_id=update.message.chat_id,
 	                 text=msg)

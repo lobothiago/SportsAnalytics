@@ -82,7 +82,9 @@ def build_digest_message(days_to_show=match_day_window, delta_threshold=default_
 											   hour, day, match_url,
 											   fit_score FROM '{}'""".format(bets_table_name))
 
-	valid_bets = [x for x in all_bets if x[8] in valid_dates and x[5] > delta_threshold]
+	valid_bets = [x for x in all_bets if x[8] in valid_dates 
+									  and x[5] > delta_threshold 
+									  and datetime.strptime(u"{} {}".format(x[8], x[7]), u"{} {}".format(date_storage_format, time_storage_format)) > datetime.now()]
 
 	bet_dates = [[y for y in valid_bets if y[8] == x] for x in valid_dates]
 
@@ -402,7 +404,7 @@ def bot_init():
 	# job_q.put(Job(callback_digest, (12 * 60 * 60)), next_t=deltaseconds)
 	
 	logger.info("Crawling matches for bot startup...")
-	job_q.put(Job(callback_crawl_matches, (12 * 60 * 60)), next_t=0)
+	job_q.put(Job(callback_crawl_matches, (8 * 60 * 60)), next_t=0)
 	
 	logger.info("Crawling bets for bot startup...")
 	job_q.put(Job(callback_crawl_bets, (4 * 60 * 60)), next_t=0)

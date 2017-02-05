@@ -226,15 +226,18 @@ class Crawler():
         h_name, h_age = self.filter_team_name(match.find('td', attrs={'class':'team-a'}).a.string.strip())
         v_name, v_age = self.filter_team_name(match.find('td', attrs={'class':'team-b'}).a.string.strip())
 
-        if u"…" in h_name:
-            self.logger.debug(u"h_name '{}' is too big. Using url to determine it".format(h_name))
+        if u"…" in h_name or len(h_name) <= 3:
+            self.logger.debug(u"h_name '{}' is too big or too small. Using url to determine it".format(h_name))
             h_name, h_age = self.team_name_from_url(h_url)
             self.logger.debug(u"New h_name '{}'".format(h_name))
 
-        if u"…" in v_name:
-            self.logger.debug(u"v_name '{}' is too big. Using url to determine it".format(v_name))
+        if u"…" in v_name or len(v_name) <= 3:
+            self.logger.debug(u"v_name '{}' is too big or too small. Using url to determine it".format(v_name))
             v_name, v_age = self.team_name_from_url(v_url)
             self.logger.debug(u"New v_name '{}'".format(v_name))
+
+        # h_name, h_age = self.team_name_from_url(h_url)
+        # v_name, v_age = self.team_name_from_url(v_url)
 
         db = SQLDb(self.db_name)
 

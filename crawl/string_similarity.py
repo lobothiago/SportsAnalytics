@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import jellyfish
+import sys
 from difflib import SequenceMatcher
 from pprint import pprint
 
@@ -8,7 +9,7 @@ def similar(a, b):
     return SequenceMatcher(None, a, b).ratio()
     # return jellyfish.levenshtein_distance(unicode(a), unicode(b))
 
-def list_similarity(input, options, tops=10):
+def list_similarity(input, options, tops=sys.maxint):
 	scores = []
 	indices = [i for i in range(len(options))]
 	

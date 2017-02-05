@@ -596,8 +596,8 @@ class Crawler():
 
                 if bet_hour == "23:59":
                     bet_dt = bet_dt + timedelta(minutes=1)
-                
-                date_matches = db.execute_group(u"""SELECT * FROM '{}'
+
+                date_matches = db.execute_group(u"""SELECT match_url, a_name, b_name, a_url, b_url, hour, day FROM '{}'
                                                     WHERE day = '{}'
                                                 """.format(self.matches_table_name,
                                                            bet_dt.strftime(self.date_storage_format)))
@@ -617,7 +617,7 @@ class Crawler():
                 if not len(close_matches) > 0:
                     self.logger.debug(u"No matches within time tolerance for bet at date {}".format(bet_dt))
                     continue
-                
+                                
                 bet_id = bet["camp_jog_id"]
 
                 bet_delta_rate = abs(bet["taxa_c"] - bet["taxa_f"])
@@ -627,22 +627,22 @@ class Crawler():
 
                 close_matches_team_h = [x[1].lower() for x in close_matches]
                 close_matches_team_v = [x[2].lower() for x in close_matches]
-                scores_h = list_similarity(team_h.lower(), close_matches_team_h, 10)
-                scores_v = list_similarity(team_v.lower(), close_matches_team_v, 10)
+                scores_h = list_similarity(team_h.lower(), close_matches_team_h)
+                scores_v = list_similarity(team_v.lower(), close_matches_team_v)
 
                 # This line and the next for loop are supposed to merge scores_h and scores_v
-                scores = scores_h
-
+                scores = list(scores_h)
+                
                 for score_v in scores_v:
                     index = [i for i, x in enumerate(scores) if x[1] == score_v[1]]
                     if len(index) > 0:
                         scores[index[0]] = (scores[index[0]][0] + score_v[0], score_v[1])
                     else:
                         scores.append(score_v)
-                
+
                 # Most likely match is the one with maximum score
                 likely_match = [(close_matches[x[1]], x[0] / 2) for x in sorted(scores, reverse=True)][0]
-
+                
                 # Store bet in database (and update if repeated)
                 self.logger.info(u"Storing bet #{}".format(bet_id))
                 
@@ -685,7 +685,7 @@ if __name__ == '__main__':
 
     # db = SQLDb(crawler.db_name)
 
-    # -- match = db.execute("SELECT * FROM '{}' WHERE match_url = 'http://br.soccerway.com/matches/2017/02/04/bolivia/lfpb/club-bolivar/club-petrolero-de-tarija/2401858/'".format(crawler.matches_table_name))
+    # match = db.execute("SELECT * FROM '{}' WHERE match_url = 'http://br.soccerway.com/matches/2017/02/05/portugal/portuguese-liga-/benfica/clube-desportivo-nacional/2284900/'".format(crawler.matches_table_name))
     # pprint(match)
 
     # matches = db.execute_group("SELECT day FROM '{}'".format(crawler.matches_table_name))

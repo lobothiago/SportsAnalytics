@@ -34,6 +34,7 @@ date_storage_format = config.get(db_section, "date_storage_format")
 time_storage_format = config.get(db_section, "time_storage_format")
 
 match_day_window = int(config.get(crawler_section, "match_day_window"))
+old_match_tolerance = int(config.get(crawler_section, "old_match_tolerance"))
 
 crawler = Crawler()
 
@@ -143,44 +144,52 @@ def build_bet_expand_message(bet_id):
 		msg += u"{}: {}\n".format(bet[3], analysis[2])
 		msg += u"Delta: {}\n\n".format(analysis[3])
 
-	# msg += u"*Análise das últimas partidas:*\n"
-	# msg += u"*{} - em casa*\n".format(bet["home_name"])
-	# msg += u"Gols feitos em casa: {}\n".format(analysis["home_goals_home"])
-	# msg += u"Gols sofridos em casa: {}\n".format(analysis["home_taken_home"])
-	# try:
-	# 	ratio = float(analysis["home_goals_home"]) / float(analysis["home_taken_home"])
-	# except Exception:
-	# 	ratio = float('Inf')
-	# msg += u"Razão em casa: {0:.2f}\n\n".format(ratio)
-	# msg += u"Gols feitos fora: {}\n".format(analysis["home_goals_visit"])
-	# msg += u"Gols sofridos fora: {}\n".format(analysis["home_taken_visit"])
-	# try:
-	# 	ratio = float(analysis["home_goals_visit"]) / float(analysis["home_taken_visit"])
-	# except Exception:
-	# 	ratio = float('Inf')
-	# msg += u"Razão fora: {0:.2f}\n\n".format(ratio)
+	msg += u"*Análise das últimas partidas (últimos {} meses):*\n".format(old_match_tolerance / (24 * 60 * 60 * 30))
+	msg += u"*{} - casa*\n".format(bet[1])
+	msg += u"Gols feitos em casa: {}\n".format(analysis[5])
+	msg += u"Gols sofridos em casa: {}\n".format(analysis[6])
+	
+	try:
+		ratio = float(analysis[5]) / float(analysis[6])
+	except Exception:
+		ratio = float('Inf')
 
-	# msg += u"Vitórias/derrotas em casa: {}/{}\n".format(analysis["home_wins_home"], (analysis["home_matches_home"] - analysis["home_wins_home"]))
-	# msg += u"Vitórias/derrotas fora: {}/{}\n\n".format(analysis["home_wins_visit"], (analysis["home_matches_visit"] - analysis["home_wins_visit"]))
+	msg += u"Razão em casa: {0:.2f}\n\n".format(ratio)
+	msg += u"Gols feitos fora: {}\n".format(analysis[11])
+	msg += u"Gols sofridos fora: {}\n".format(analysis[12])
+	
+	try:
+		ratio = float(analysis[11]) / float(analysis[12])
+	except Exception:
+		ratio = float('Inf')
 
-	# msg += u"*{} - fora*\n".format(bet[3])
-	# msg += u"Gols feitos em casa: {}\n".format(analysis["visit_goals_home"])
-	# msg += u"Gols sofridos em casa: {}\n".format(analysis["visit_taken_home"])
-	# try:
-	# 	ratio = float(analysis["visit_goals_home"]) / float(analysis["visit_taken_home"])
-	# except Exception:
-	# 	ratio = float('Inf')
-	# msg += u"Razão em casa: {0:.2f}\n\n".format(ratio)
-	# msg += u"Gols feitos fora: {}\n".format(analysis["visit_goals_visit"])
-	# msg += u"Gols sofridos fora: {}\n".format(analysis["visit_taken_visit"])
-	# try:
-	# 	ratio = float(analysis["visit_goals_visit"]) / float(analysis["visit_taken_visit"])
-	# except Exception:
-	# 	ratio = float('Inf')
-	# msg += u"Razão fora: {0:.2f}\n\n".format(ratio)
+	msg += u"Razão fora: {0:.2f}\n\n".format(ratio)
 
-	# msg += u"Vitórias/derrotas em casa: {}/{}\n".format(analysis["visit_wins_home"], (analysis["visit_matches_home"] - analysis["visit_wins_home"]))
-	# msg += u"Vitórias/derrotas fora: {}/{}\n\n".format(analysis["visit_wins_visit"], (analysis["visit_matches_visit"] - analysis["visit_wins_visit"]))
+	msg += u"Vitórias/empates/derrotas em casa: {}/{}/{}\n".format(analysis[8], analysis[10], analysis[9])
+	msg += u"Vitórias/empates/derrotas fora: {}/{}/{}\n\n".format(analysis[14], analysis[16], analysis[15])
+
+	msg += u"*{} - fora*\n".format(bet[3])
+	msg += u"Gols feitos em casa: {}\n".format(analysis[17])
+	msg += u"Gols sofridos em casa: {}\n".format(analysis[18])
+
+	try:
+		ratio = float(analysis[17]) / float(analysis[18])
+	except Exception:
+		ratio = float('Inf')
+
+	msg += u"Razão em casa: {0:.2f}\n\n".format(ratio)
+	msg += u"Gols feitos fora: {}\n".format(analysis[23])
+	msg += u"Gols sofridos fora: {}\n".format(analysis[24])
+	
+	try:
+		ratio = float(analysis[23]) / float(analysis[24])
+	except Exception:
+		ratio = float('Inf')
+
+	msg += u"Razão fora: {0:.2f}\n\n".format(ratio)
+
+	msg += u"Vitórias/empates/derrotas em casa: {}/{}/{}\n".format(analysis[20], analysis[22], analysis[21])
+	msg += u"Vitórias/empates/derrotas fora: {}/{}/{}\n\n".format(analysis[26], analysis[28], analysis[27])
 	
 	return msg
 

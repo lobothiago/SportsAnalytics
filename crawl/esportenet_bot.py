@@ -399,13 +399,13 @@ def bot_init():
 
 	# Add new Job to the dispatcher's job queue.
 	# Will happen every 12 hours seconds, starting from deltaseconds
-	job_q.put(Job(callback_digest, (12 * 60 * 60)), next_t=deltaseconds)
+	# job_q.put(Job(callback_digest, (12 * 60 * 60)), next_t=deltaseconds)
 	
 	logger.info("Crawling matches for bot startup...")
-	# job_q.put(Job(callback_crawl_matches, (8 * 60 * 60)), next_t=0)
+	job_q.put(Job(callback_crawl_matches, (12 * 60 * 60)), next_t=0)
 	
 	logger.info("Crawling bets for bot startup...")
-	# job_q.put(Job(callback_crawl_bets, (4 * 60 * 60)), next_t=0)
+	job_q.put(Job(callback_crawl_bets, (4 * 60 * 60)), next_t=0)
 
 	start_handler = CommandHandler('start', start)
 	dispatcher.add_handler(start_handler)

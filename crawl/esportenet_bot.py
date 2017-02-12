@@ -515,11 +515,11 @@ def bot_init():
 	# Will happen every 12 hours seconds, starting from deltaseconds
 	# job_q.put(Job(callback_digest, (12 * 60 * 60)), next_t=deltaseconds)
 	
-	# logger.info("Crawling matches for bot startup...")
-	# job_q.put(Job(callback_crawl_matches, (24 * 60 * 60)), next_t=0)
+	logger.info("Crawling matches for bot startup...")
+	job_q.put(Job(callback_crawl_matches, (24 * 60 * 60)), next_t=0)
 	
-	# logger.info("Crawling bets for bot startup...")
-	# job_q.put(Job(callback_crawl_bets, (12 * 60 * 60)), next_t=0)
+	logger.info("Crawling bets for bot startup...")
+	job_q.put(Job(callback_crawl_bets, (12 * 60 * 60)), next_t=0)
 
 	job_q.put(Job(callback_follow, (300)), next_t=0)
 

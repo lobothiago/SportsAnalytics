@@ -32,6 +32,7 @@ matches_table_name = config.get(db_section, "matches_table_name")
 analyses_table_name = config.get(db_section, "analyses_table_name")
 date_storage_format = config.get(db_section, "date_storage_format")
 time_storage_format = config.get(db_section, "time_storage_format")
+follows_table_name = config.get(db_section, "follows_table_name")
 
 match_day_window = int(config.get(crawler_section, "match_day_window"))
 old_match_tolerance = int(config.get(crawler_section, "old_match_tolerance"))
@@ -226,7 +227,116 @@ def callback_crawl_bets(bot, job):
 	except Exception as e:
 		logger.error("Couldn't crawl bets. Error: {}".format(e.message))
 
+def callback_follow(bot, job):
+	logger.info(u"Starting follow callback")
+	db = SQLDb(db_name)
+	
+	followed_bets = db.execute_group(u"SELECT id, score_h, score_v, status FROM '{}'".format(follows_table_name))
+
+	for followed_bet in followed_bets:
+		try:
+			logger.debug(u"Checking followed bet #{}".format(followed_bet[0]))
+			bet_data = db.execute_group(u"SELECT home_name, visit_name, match_url FROM '{}' WHERE id={}".format(bets_table_name, followed_bet[0]))
+			score_result = crawler.crawl_match_score(bet_data[2])
+			
+			if score_result["status"] == "future":
+				continue
+			elif score_result["status"] == "past":
+				db.execute(u"""
+			                    DELETE FROM '{}'
+			                    WHERE id={};
+			                """.format(follows_table_name, followed_bet[0]))
+				db.execute(u"DROP TABLE '{}'".format(followed_bet[0]))
+			else:
+				followers = db.execute_group(u"SELECT id FROM '{}'".format(followed_bet[0]))
+				if followed_bet[3] == "future":
+					# Update data
+					db.execute(u"""
+			                    	DELETE FROM '{}'
+			                    	WHERE id={};
+			                	""".format(follows_table_name, followed_bet[0]))
+
+					db.execute(u"""
+	                         		INSERT INTO '{}' (id, score_h, score_v, status)
+	                         		VALUES ({}, {}, {}, '{}');
+	                     		""".format(follows_table_name, followed_bet[0], 0, 0, "ongoing"))
+
+					for follower in [x[0] for x in followers]:
+						bot.send_message(chat_id=follower,
+									 	 text=u"{} x {}: Começou agora!".format(bet_data[0], bet_data[1]))
+				else:
+					if score_result["score_h"] != followed_bet[1] or score_result["score_v"] != followed_bet[2]:
+						# Update data
+						db.execute(u"""
+			                    		DELETE FROM '{}'
+			                    		WHERE id={};
+			                		""".format(follows_table_name, followed_bet[0]))
+
+						db.execute(u"""
+		                         		INSERT INTO '{}' (id, score_h, score_v, status)
+		                         		VALUES ({}, {}, {}, '{}');
+		                     		""".format(follows_table_name, followed_bet[0], score_result["score_h"], score_result["score_v"], "ongoing"))
+
+						for follower in [x[0] for x in followers]:
+							bot.send_message(chat_id=follower,
+									 	 	 text=u"{} x {}: {} x {}".format(bet_data[0], bet_data[1], score_result["score_h"], score_result["score_v"]))
+		except Exception as e:
+			logger.error(u"Couldn't complete follow callback for followed bet #{}:".format(followed_bet[0], e.message))
+
+
 # Commands ---------------------------------
+
+def follow(bot, update, args):
+	db = SQLDb(db_name)
+
+	chat_id = str(update.message.chat_id)
+	
+	if db.row_exists(subscribers_table_name, u"id={}".format(chat_id)):
+		if len(args) == 0:
+			bot.send_message(chat_id=update.message.chat_id,
+							 text=u"É necessário fornecer ids de partidas para seguí-las.")
+
+		for arg in args:
+			try:
+				if not db.row_exists(bets_table_name, u"id={}".format(arg)):
+					bot.send_message(chat_id=update.message.chat_id,
+								 	 text=u"{} não é um id válido.".format(arg))
+					continue
+
+				if not db.row_exists(follows_table_name, u"id={}".format(arg)):
+					logger.info(u"Adding new followed bet #{}".format(arg))
+					db.execute(u"""
+	                         		INSERT INTO '{}' (id, score_h, score_v, status)
+	                         		VALUES ({}, {}, {}, '{}');
+	                     		""".format(follows_table_name, arg, 0, 0, "future"))
+
+					db.execute(u""" 
+									CREATE TABLE '{}' 
+									( 
+										id INTEGER PRIMARY KEY
+									);
+							   """.format(arg))
+					logger.info(u"Followed bet #{} successfully added".format(arg))
+
+				if not db.row_exists(arg, u"id={}".format(chat_id)):
+					db.execute(u"""
+	                         		INSERT INTO '{}' (id)
+	                         		VALUES ({});
+	                     		""".format(arg, chat_id))
+
+					bot.send_message(chat_id=update.message.chat_id,
+								 	 text=u"Agora você segue a aposta {}.".format(arg))
+					logger.info(u"Chat #{} now following bet #{}".format(chat_id, arg))
+				else:
+					bot.send_message(chat_id=update.message.chat_id,
+								 	 text=u"Você já segue a aposta {}.".format(arg))
+			except Exception as e:
+				bot.send_message(chat_id=update.message.chat_id,
+							 	 text=u"Erro: {}".format(e.message))
+				logger.error(u"Couldn't add follower for bet {}: {}".format(arg, e.message))
+	else:
+		bot.send_message(chat_id=update.message.chat_id,
+						 text=u"Esse recurso só é disponível para assinantes.\n")
 
 def show(bot, update, args):
 	db = SQLDb(db_name)
@@ -403,11 +513,13 @@ def bot_init():
 	# Will happen every 12 hours seconds, starting from deltaseconds
 	# job_q.put(Job(callback_digest, (12 * 60 * 60)), next_t=deltaseconds)
 	
-	logger.info("Crawling matches for bot startup...")
-	job_q.put(Job(callback_crawl_matches, (8 * 60 * 60)), next_t=0)
+	# logger.info("Crawling matches for bot startup...")
+	job_q.put(Job(callback_crawl_matches, (24 * 60 * 60)), next_t=0)
 	
-	logger.info("Crawling bets for bot startup...")
-	job_q.put(Job(callback_crawl_bets, (4 * 60 * 60)), next_t=0)
+	# logger.info("Crawling bets for bot startup...")
+	job_q.put(Job(callback_crawl_bets, (12 * 60 * 60)), next_t=0)
+
+	job_q.put(Job(callback_follow, (300)), next_t=0)
 
 	start_handler = CommandHandler('start', start)
 	dispatcher.add_handler(start_handler)
@@ -423,6 +535,9 @@ def bot_init():
 
 	show_handler = CommandHandler('show', show, pass_args=True)
 	dispatcher.add_handler(show_handler)
+
+	follow_handler = CommandHandler('follow', follow, pass_args=True)
+	dispatcher.add_handler(follow_handler)
 
 	unknown_handler = MessageHandler(Filters.command, unknown)
 	dispatcher.add_handler(unknown_handler)
@@ -445,6 +560,18 @@ def db_init():
 				username VARCHAR(25)
 			);
 		""".format(subscribers_table_name))
+
+	if not db.table_exists(follows_table_name):
+		logger.info(u"Table '{}' does not exist. Creating it now".format(follows_table_name))
+		db.execute(""" 
+			CREATE TABLE {} 
+			( 
+				id INTEGER PRIMARY KEY,
+				score_h INTEGER,
+				score_v INTEGER,
+				status VARCHAR(8)
+			);
+		""".format(follows_table_name))
 
 def init():
 	db_init()

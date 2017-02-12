@@ -272,6 +272,32 @@ class Crawler():
         
         return html
 
+    def crawl_match_score(self, match_url):
+        parsed_html = self.parse_html(match_url)
+
+        result = dict(
+            status="future",
+            score_h=-1,
+            score_v=-1
+        )
+
+        score_header = parsed_html.find("h3", attrs={'class':'scoretime'})
+        
+        if score_header.string:
+            score_class = score_header.get("class")
+
+            if "score-orange" in score_class:
+                result["status"] = "ongoing"
+            else:
+                result["status"] = "past"
+
+            scores = [x.strip() for x in score_header.string.split("-")]
+
+            result["score_h"] = int(scores[0])
+            result["score_v"] = int(scores[1])
+
+        return result
+
     def crawl_matches_by_day(self, dt):
         date_url = dt.strftime("%Y/%m/%d")
         # date_db = dt.strftime(self.date_storage_format)
@@ -351,7 +377,7 @@ class Crawler():
 
         stored_bets_urls = db.execute_group(u"SELECT match_url FROM '{}'".format(self.bets_table_name))
 
-        unreferenced_matches = [x for x in stored_matches if x[0][0] not in stored_bets_urls]
+        unreferenced_matches = [x for x in stored_matches if x[0] not in [y[0] for y in stored_bets_urls]]
 
         self.logger.info(u"Found {} matches and {} bets yielding {} unreferenced matches".format(len(stored_matches), len(stored_bets_urls), len(unreferenced_matches)))
 
@@ -592,115 +618,115 @@ class Crawler():
         self.logger.info("Found {} bets. Analysing them now".format(len(data)))
 
         for bet in data:
-            if "basquete" not in bet["camp_nome"].lower():                
-                bet_dt = datetime.strptime(bet["dt_hr_ini"], '%Y-%m-%dT%H:%M:00')
+            try:
+                if "basquete" not in bet["camp_nome"].lower():                
+                    bet_dt = datetime.strptime(bet["dt_hr_ini"], '%Y-%m-%dT%H:%M:00')
 
-                bet_hour = bet_dt.strftime(self.time_storage_format)
+                    bet_hour = bet_dt.strftime(self.time_storage_format)
 
-                if bet_hour == "23:59":
-                    bet_dt = bet_dt + timedelta(minutes=1)
+                    if bet_hour == "23:59":
+                        bet_dt = bet_dt + timedelta(minutes=1)
 
-                date_matches = db.execute_group(u"""SELECT match_url, a_name, b_name, a_url, b_url, hour, day FROM '{}'
-                                                    WHERE day = '{}'
-                                                """.format(self.matches_table_name,
-                                                           bet_dt.strftime(self.date_storage_format)))
+                    date_matches = db.execute_group(u"""SELECT match_url, a_name, b_name, a_url, b_url, hour, day FROM '{}'
+                                                        WHERE day = '{}'
+                                                    """.format(self.matches_table_name,
+                                                               bet_dt.strftime(self.date_storage_format)))
 
-                if not len(date_matches) > 0:
-                    self.logger.debug(u"No matches found for bet at dt: '{}'. Skipping it".format(bet_dt.strftime("{} {}".format(self.date_storage_format, self.time_storage_format))))
-                    continue
+                    if not len(date_matches) > 0:
+                        self.logger.debug(u"No matches found for bet at dt: '{}'. Skipping it".format(bet_dt.strftime("{} {}".format(self.date_storage_format, self.time_storage_format))))
+                        continue
 
-                match_dts = [datetime.strptime("{} {}".format(x[6], x[5]), "{} {}".format(self.date_storage_format, self.time_storage_format)) for x in date_matches]
+                    match_dts = [datetime.strptime("{} {}".format(x[6], x[5]), "{} {}".format(self.date_storage_format, self.time_storage_format)) for x in date_matches]
 
-                close_matches = []
+                    close_matches = []
 
-                for index, match_dt in enumerate(match_dts):
-                    if abs((bet_dt - match_dt).total_seconds()) <= self.match_hour_threshold * 60 * 60:
-                        close_matches.append(date_matches[index])                    
+                    for index, match_dt in enumerate(match_dts):
+                        if abs((bet_dt - match_dt).total_seconds()) <= self.match_hour_threshold * 60 * 60:
+                            close_matches.append(date_matches[index])                    
 
-                if not len(close_matches) > 0:
-                    self.logger.debug(u"No matches within time tolerance for bet at date {}".format(bet_dt))
-                    continue
-                                
-                bet_id = bet["camp_jog_id"]
+                    if not len(close_matches) > 0:
+                        self.logger.debug(u"No matches within time tolerance for bet at date {}".format(bet_dt))
+                        continue
+                                    
+                    bet_id = bet["camp_jog_id"]
 
-                bet_delta_rate = abs(bet["taxa_c"] - bet["taxa_f"])
+                    bet_delta_rate = abs(bet["taxa_c"] - bet["taxa_f"])
 
-                team_h, age_h = self.filter_team_name(bet["casa_time"])
-                team_v, age_v = self.filter_team_name(bet["visit_time"])
+                    team_h, age_h = self.filter_team_name(bet["casa_time"])
+                    team_v, age_v = self.filter_team_name(bet["visit_time"])
 
-                close_matches_team_h = [x[1].lower() for x in close_matches]
-                close_matches_team_v = [x[2].lower() for x in close_matches]
-                scores_h = list_similarity(team_h.lower(), close_matches_team_h)
-                scores_v = list_similarity(team_v.lower(), close_matches_team_v)
+                    close_matches_team_h = [x[1].lower() for x in close_matches]
+                    close_matches_team_v = [x[2].lower() for x in close_matches]
+                    scores_h = list_similarity(team_h.lower(), close_matches_team_h)
+                    scores_v = list_similarity(team_v.lower(), close_matches_team_v)
 
-                # This line and the next for loop are supposed to merge scores_h and scores_v
-                scores = list(scores_h)
-                
-                for score_v in scores_v:
-                    index = [i for i, x in enumerate(scores) if x[1] == score_v[1]]
-                    if len(index) > 0:
-                        scores[index[0]] = (scores[index[0]][0] + score_v[0], score_v[1])
-                    else:
-                        scores.append(score_v)
+                    # This line and the next for loop are supposed to merge scores_h and scores_v
+                    scores = list(scores_h)
+                    
+                    for score_v in scores_v:
+                        index = [i for i, x in enumerate(scores) if x[1] == score_v[1]]
+                        if len(index) > 0:
+                            scores[index[0]] = (scores[index[0]][0] + score_v[0], score_v[1])
+                        else:
+                            scores.append(score_v)
 
-                # Most likely match is the one with maximum score
-                likely_match = [(close_matches[x[1]], x[0] / 2) for x in sorted(scores, reverse=True)][0]
-                
-                # Store bet in database (and update if repeated)
-                self.logger.info(u"Storing bet #{}".format(bet_id))
-                
-                if db.row_exists(self.bets_table_name, u"id = '{}'".format(bet_id)):
+                    # Most likely match is the one with maximum score
+                    likely_match = [(close_matches[x[1]], x[0] / 2) for x in sorted(scores, reverse=True)][0]
+                    
+                    # Store bet in database (and update if repeated)
+                    self.logger.info(u"Storing bet #{}".format(bet_id))
+                    
+                    if db.row_exists(self.bets_table_name, u"id = '{}'".format(bet_id)):
+                        db.execute(u"""
+                            DELETE FROM '{}'
+                            WHERE id = {};
+                        """.format(self.bets_table_name, bet_id))
+                    
                     db.execute(u"""
-                        DELETE FROM '{}'
-                        WHERE id = {};
-                    """.format(self.bets_table_name, bet_id))
-                
-                db.execute(u"""
-                    INSERT INTO '{}' (id,
-                                      home_name, 
-                                      home_rate, 
-                                      visit_name, 
-                                      visit_rate, 
-                                      delta_rate, 
-                                      draw_rate, 
-                                      hour,
-                                      day,
-                                      match_url,
-                                      fit_score)
-                    VALUES ({}, '{}', {}, '{}', {}, {}, {}, '{}', '{}', '{}', {});
-                """.format(self.bets_table_name, 
-                           bet_id, 
-                           bet["casa_time"], 
-                           bet["taxa_c"], 
-                           bet["visit_time"], 
-                           bet["taxa_f"], 
-                           bet_delta_rate, 
-                           bet["taxa_e"],
-                           "{}".format(bet_dt.strftime(self.time_storage_format)),
-                           "{}".format(bet_dt.strftime(self.date_storage_format)),
-                           likely_match[0][0],
-                           likely_match[1]))
+                        INSERT INTO '{}' (id,
+                                          home_name, 
+                                          home_rate, 
+                                          visit_name, 
+                                          visit_rate, 
+                                          delta_rate, 
+                                          draw_rate, 
+                                          hour,
+                                          day,
+                                          match_url,
+                                          fit_score)
+                        VALUES ({}, '{}', {}, '{}', {}, {}, {}, '{}', '{}', '{}', {});
+                    """.format(self.bets_table_name, 
+                               bet_id, 
+                               bet["casa_time"].replace("'", ""), 
+                               bet["taxa_c"], 
+                               bet["visit_time"].replace("'", ""), 
+                               bet["taxa_f"], 
+                               bet_delta_rate, 
+                               bet["taxa_e"],
+                               "{}".format(bet_dt.strftime(self.time_storage_format)),
+                               "{}".format(bet_dt.strftime(self.date_storage_format)),
+                               likely_match[0][0],
+                               likely_match[1]))
 
-                self.analyse_match(likely_match[0][0])
+                    self.analyse_match(likely_match[0][0])
+            except Exception as e:
+                self.logger.error(u"Couldn't crawl bet #{}. {}. Skipping it".format(bet["camp_jog_id"], e.message))
+                continue
 
 if __name__ == '__main__':
     crawler = Crawler()
 
+    # r = crawler.crawl_match_score("http://br.soccerway.com/matches/2017/02/12/chile/primera-b/provincial-curico-unido/club-de-desportes-cobreloa/2381691/?ICID=HP_MS_64_03")
+    # pprint(r)
+
     # db = SQLDb(crawler.db_name)
+    
+    # stored_matches = db.execute_group(u"SELECT match_url, day, hour FROM '{}'".format(crawler.matches_table_name))
+    # stored_bets_urls = db.execute_group(u"SELECT match_url FROM '{}'".format(crawler.bets_table_name))
+    # unreferenced_matches = [x for x in stored_matches if x[0] not in [y[0] for y in stored_bets_urls]]
 
-    # match = db.execute("SELECT * FROM '{}' WHERE match_url = 'http://br.soccerway.com/matches/2017/02/05/portugal/portuguese-liga-/benfica/clube-desportivo-nacional/2284900/'".format(crawler.matches_table_name))
-    # pprint(match)
-
-    # matches = db.execute_group("SELECT day FROM '{}'".format(crawler.matches_table_name))
-    # distinct = set(matches)
-    # pprint(distinct)
-
-    # matches = db.execute_group("SELECT day FROM '{}' WHERE day = '17/02/05'".format(crawler.bets_table_name))
-    # print len(matches)
-    # distinct = set(matches)
-    # pprint(distinct)
-    crawler.crawl_matches()
-    crawler.crawl_bets()
+    # crawler.crawl_matches()
+    # crawler.crawl_bets()
         
 # Testes:
 # distancia na tabela

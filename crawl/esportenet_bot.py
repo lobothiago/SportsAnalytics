@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from my_logger import MyLogger
 from my_config_reader import MyConfigReader
 from my_db import SQLDb
+import sys
 from crawler import Crawler
 
 db_section = "db"
@@ -236,12 +237,13 @@ def callback_follow(bot, job):
 	for followed_bet in followed_bets:
 		try:
 			logger.debug(u"Checking followed bet #{}".format(followed_bet[0]))
-			bet_data = db.execute_group(u"SELECT home_name, visit_name, match_url FROM '{}' WHERE id={}".format(bets_table_name, followed_bet[0]))
+			bet_data = db.execute(u"SELECT home_name, visit_name, match_url FROM '{}' WHERE id={}".format(bets_table_name, followed_bet[0]))
 			score_result = crawler.crawl_match_score(bet_data[2])
 			
 			if score_result["status"] == "future":
 				continue
 			elif score_result["status"] == "past":
+				logger.info("Dropping followed bet #{}".format(followed_bet[0]))
 				db.execute(u"""
 			                    DELETE FROM '{}'
 			                    WHERE id={};
@@ -259,11 +261,11 @@ def callback_follow(bot, job):
 					db.execute(u"""
 	                         		INSERT INTO '{}' (id, score_h, score_v, status)
 	                         		VALUES ({}, {}, {}, '{}');
-	                     		""".format(follows_table_name, followed_bet[0], 0, 0, "ongoing"))
+	                     		""".format(follows_table_name, followed_bet[0], score_result["score_h"], score_result["score_v"], "ongoing"))
 
 					for follower in [x[0] for x in followers]:
 						bot.send_message(chat_id=follower,
-									 	 text=u"{} x {}: Começou agora!".format(bet_data[0], bet_data[1]))
+									 	 text=u"{} x {}: Começou! {} - {}".format(bet_data[0], bet_data[1], score_result["score_h"], score_result["score_v"]))
 				else:
 					if score_result["score_h"] != followed_bet[1] or score_result["score_v"] != followed_bet[2]:
 						# Update data
@@ -279,9 +281,9 @@ def callback_follow(bot, job):
 
 						for follower in [x[0] for x in followers]:
 							bot.send_message(chat_id=follower,
-									 	 	 text=u"{} x {}: {} x {}".format(bet_data[0], bet_data[1], score_result["score_h"], score_result["score_v"]))
+									 	 	 text=u"{} x {}: {} - {}".format(bet_data[0], bet_data[1], score_result["score_h"], score_result["score_v"]))
 		except Exception as e:
-			logger.error(u"Couldn't complete follow callback for followed bet #{}:".format(followed_bet[0], e.message))
+			logger.error(u"Couldn't complete follow callback for followed bet #{}: {} - ln: {}".format(followed_bet[0], e.message, sys.exc_traceback.tb_lineno))
 
 
 # Commands ---------------------------------
@@ -514,10 +516,10 @@ def bot_init():
 	# job_q.put(Job(callback_digest, (12 * 60 * 60)), next_t=deltaseconds)
 	
 	# logger.info("Crawling matches for bot startup...")
-	job_q.put(Job(callback_crawl_matches, (24 * 60 * 60)), next_t=0)
+	# job_q.put(Job(callback_crawl_matches, (24 * 60 * 60)), next_t=0)
 	
 	# logger.info("Crawling bets for bot startup...")
-	job_q.put(Job(callback_crawl_bets, (12 * 60 * 60)), next_t=0)
+	# job_q.put(Job(callback_crawl_bets, (12 * 60 * 60)), next_t=0)
 
 	job_q.put(Job(callback_follow, (300)), next_t=0)
 

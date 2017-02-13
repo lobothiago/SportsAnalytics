@@ -33,7 +33,7 @@ class Crawler():
     old_match_tolerance = int(config.get(crawler_section, "old_match_tolerance"))
     bets_file_name = config.get(crawler_section, "bets_file_name")
     discard_matches_days = float(config.get(crawler_section, "discard_matches_days"))
-
+    
     db_name = config.get(db_section, "db_name")
     teams_table_name = config.get(db_section, "teams_table_name")
     matches_table_name = config.get(db_section, "matches_table_name")

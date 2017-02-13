@@ -244,11 +244,18 @@ def callback_follow(bot, job):
 				continue
 			elif score_result["status"] == "past":
 				logger.info("Dropping followed bet #{}".format(followed_bet[0]))
+				followers = db.execute_group(u"SELECT id FROM '{}'".format(followed_bet[0]))
+				
 				db.execute(u"""
 			                    DELETE FROM '{}'
 			                    WHERE id={};
 			                """.format(follows_table_name, followed_bet[0]))
+				
 				db.execute(u"DROP TABLE '{}'".format(followed_bet[0]))
+
+				for follower in [x[0] for x in followers]:
+						bot.send_message(chat_id=follower,
+									 	 text=u"Acabou! {} x {}: {} - {}".format(bet_data[0], bet_data[1], score_result["score_h"], score_result["score_v"]))
 			else:
 				followers = db.execute_group(u"SELECT id FROM '{}'".format(followed_bet[0]))
 				if followed_bet[3] == "future":
@@ -265,7 +272,7 @@ def callback_follow(bot, job):
 
 					for follower in [x[0] for x in followers]:
 						bot.send_message(chat_id=follower,
-									 	 text=u"{} x {}: Começou! {} - {}".format(bet_data[0], bet_data[1], score_result["score_h"], score_result["score_v"]))
+									 	 text=u"Começou! {} x {}: {} - {}".format(bet_data[0], bet_data[1], score_result["score_h"], score_result["score_v"]))
 				else:
 					if score_result["score_h"] != followed_bet[1] or score_result["score_v"] != followed_bet[2]:
 						# Update data
@@ -281,7 +288,7 @@ def callback_follow(bot, job):
 
 						for follower in [x[0] for x in followers]:
 							bot.send_message(chat_id=follower,
-									 	 	 text=u"{} x {}: {} - {}".format(bet_data[0], bet_data[1], score_result["score_h"], score_result["score_v"]))
+									 	 	 text=u"Gol! {} x {}: {} - {}".format(bet_data[0], bet_data[1], score_result["score_h"], score_result["score_v"]))
 		except Exception as e:
 			logger.error(u"Couldn't complete follow callback for followed bet #{}: {} - ln: {}".format(followed_bet[0], e.message, sys.exc_traceback.tb_lineno))
 
@@ -521,7 +528,7 @@ def bot_init():
 	logger.info("Crawling bets for bot startup...")
 	job_q.put(Job(callback_crawl_bets, (12 * 60 * 60)), next_t=0)
 
-	job_q.put(Job(callback_follow, (300)), next_t=0)
+	job_q.put(Job(callback_follow, (120)), next_t=0)
 
 	start_handler = CommandHandler('start', start)
 	dispatcher.add_handler(start_handler)
